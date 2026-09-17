@@ -1,0 +1,22 @@
+[project]
+name = "pocketcasts-mcp"
+version = "0.1.0"
+description = "Local MCP server for the Pocket Casts Up Next queue (unofficial API)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.2",
+    "api-pocketcasts>=0.1.12",
+    "keyring>=25",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+pocketcasts-mcp = "pocketcasts_mcp.server:main"
+pocketcasts-mcp-auth = "pocketcasts_mcp.auth:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pocketcasts_mcp"]
