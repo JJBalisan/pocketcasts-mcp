@@ -1,0 +1,253 @@
+{
+  "instructions": "Read and edit the user's Pocket Casts Up Next queue. Episodes are identified by uuid; find them with list_episodes, list_new_releases, or list_in_progress before adding. Podcasts can be referenced by title (fuzzy) or uuid.",
+  "tools": [
+    {
+      "annotations": null,
+      "description": "Return the Up Next queue in play order. Position 1 is the episode currently playing; position 2 plays next.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {},
+        "title": "get_up_nextArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "get_up_next",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "get_up_nextDictOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "List subscribed podcasts (uuid, title, author), newest release first. `query` filters by substring of title or author (empty = all); `limit` caps the rows returned and total_matching reports how many matched.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "limit": {
+            "default": 50,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "query": {
+            "default": "",
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "title": "list_subscriptionsArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "list_subscriptions",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "list_subscriptionsDictOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "List recent episodes of one subscribed podcast, newest first. `podcast` is a title (fuzzy) or uuid.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "podcast": {
+            "title": "Podcast",
+            "type": "string"
+          }
+        },
+        "required": [
+          "podcast"
+        ],
+        "title": "list_episodesArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "list_episodes",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "list_episodesDictOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "Episodes in the New Releases filter (recent, unplayed) across all subscriptions.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "list_new_releasesArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "list_new_releases",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "list_new_releasesOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "Episodes that are partly played.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "limit": {
+            "default": 20,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "title": "list_in_progressArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "list_in_progress",
+      "output_schema": {
+        "properties": {
+          "result": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "list_in_progressOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "Queue an episode. position=\"next\" inserts right after the currently playing episode (position 2); \"last\" appends. Returns the new queue.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "episode_uuid": {
+            "title": "Episode Uuid",
+            "type": "string"
+          },
+          "position": {
+            "default": "next",
+            "enum": [
+              "next",
+              "last"
+            ],
+            "title": "Position",
+            "type": "string"
+          }
+        },
+        "required": [
+          "episode_uuid"
+        ],
+        "title": "add_to_up_nextArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "add_to_up_next",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "add_to_up_nextDictOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "Remove one or more episodes (by uuid) from Up Next. Returns the new queue.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "episode_uuids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Episode Uuids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "episode_uuids"
+        ],
+        "title": "remove_from_up_nextArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "remove_from_up_next",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "remove_from_up_nextDictOutput",
+        "type": "object"
+      },
+      "title": null
+    },
+    {
+      "annotations": null,
+      "description": "Move a queued episode to play next (position 2, right after the current episode). Emulated as remove + play-next; the API has no reorder call.",
+      "execution": null,
+      "icons": null,
+      "input_schema": {
+        "properties": {
+          "episode_uuid": {
+            "title": "Episode Uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "episode_uuid"
+        ],
+        "title": "move_to_frontArguments",
+        "type": "object"
+      },
+      "meta": null,
+      "name": "move_to_front",
+      "output_schema": {
+        "additionalProperties": true,
+        "title": "move_to_frontDictOutput",
+        "type": "object"
+      },
+      "title": null
+    }
+  ]
+}

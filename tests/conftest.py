@@ -1,4 +1,4 @@
-"""Shared fixtures: every test runs against fakes, never the network or keychain.
+"""Shared fixtures: tests run against fakes, never the network or keychain.
 
 Three guards keep the suite hermetic:
 

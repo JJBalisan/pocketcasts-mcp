@@ -1,0 +1,61 @@
+# Google Python Style Guide via ruff, from the shared repo-audit toolchain.
+# https://google.github.io/styleguide/pyguide.html
+# This file is the only ruff config; pyproject.toml has no [tool.ruff].
+line-length = 80          # pyguide 3.2
+indent-width = 4          # pyguide 3.4
+target-version = "py312"  # matches requires-python >=3.12
+extend-exclude = [".venv", "vendor", "data", "out", "work", "fixtures"]
+
+[format]
+quote-style = "preserve"  # pyguide 3.10 lets you pick; stay consistent per file
+docstring-code-format = true
+
+[lint]
+select = [
+  "E", "W",   # pycodestyle
+  "F",        # pyflakes
+  "I",        # isort            (pyguide 3.13 import grouping/order)
+  "N",        # pep8-naming      (pyguide 3.16)
+  "D",        # pydocstyle       (pyguide 3.8, Google convention below)
+  "B",        # bugbear          (mutable defaults 2.12, etc.)
+  "UP",       # pyupgrade
+  "ANN",      # annotations      (pyguide 2.21 / 3.19, public APIs)
+  "S",        # bandit           (security smell)
+  "A",        # builtins shadowing
+  "C4",       # comprehensions   (pyguide 2.7)
+  "SIM",      # simplify
+  "RET",      # returns
+  "ARG",      # unused args
+  "PL",       # pylint subset    (function length etc.)
+  "T20",      # print found (use logging in libraries)
+  "BLE",      # blind except     (pyguide 2.4)
+  "G",        # logging format   (pyguide 3.10.1)
+  "ICN",      # import conventions
+  "TID",      # tidy imports (bans relative imports; pyguide 2.2)
+]
+ignore = [
+  "D105", "D107",       # magic methods / __init__ docstrings not required
+  "ANN401",             # Any is sometimes unavoidable
+  "PLR0913", "PLR2004", # arg-count and magic-number are judgment calls
+  "S101",               # assert is fine in tests (see per-file-ignores)
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.isort]
+known-first-party = ["pocketcasts_mcp", "tests"]
+combine-as-imports = true
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.pylint]
+max-statements = 50      # ~ pyguide 3.18 "about 40 lines"
+
+[lint.per-file-ignores]
+"tests/**" = ["D", "ANN", "S101", "PLR", "ARG"]
+"scripts/**" = ["T20"]
+# The pocketcasts-mcp-auth command talks to the user on stdout and stderr.
+"src/pocketcasts_mcp/auth.py" = ["T20"]
+"examples/**" = ["T20", "D"]
