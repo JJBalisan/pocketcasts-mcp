@@ -1,34 +1,93 @@
-#!/bin/zsh
-# Add the pocketcasts MCP server to Claude Desktop's config.
+#!/bin/bash
+#
+# Adds the pocketcasts MCP server to Claude Desktop's config.
+#
 # Refuses to run while Claude Desktop is open: the app rewrites the file from
-# memory and would clobber the edit.
+# memory and would clobber the edit. Keeps a timestamped backup of the config
+# next to it.
+
 set -eu
 
-CONFIG="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-PROJECT="$HOME/Developer/active/pocketcasts-mcp"
-BIN="$PROJECT/.venv/bin/pocketcasts-mcp"
+readonly CLAUDE_DIR="${HOME}/Library/Application Support/Claude"
+readonly CONFIG="${CLAUDE_DIR}/claude_desktop_config.json"
+readonly PROJECT="${HOME}/Developer/active/pocketcasts-mcp"
+readonly BIN="${PROJECT}/.venv/bin/pocketcasts-mcp"
 
-# Capture first, then test (pipefail + grep -q would otherwise invert the guard).
-_procs=$(ps -Ao comm= || true)
-if printf '%s\n' "$_procs" | grep -qE '(^|/)Claude$'; then
-  echo "Claude Desktop is running. Quit it (Cmd-Q), run this again, then relaunch." >&2
-  exit 1
-fi
-[ -x "$BIN" ] || { echo "Server binary missing at $BIN; run 'uv sync' in $PROJECT first." >&2; exit 1; }
-[ -f "$CONFIG" ] || { echo "Config not found at $CONFIG" >&2; exit 1; }
+#######################################
+# Prints an error message to stderr.
+# Arguments:
+#   Message words, joined with spaces.
+# Outputs:
+#   Writes the message to stderr.
+#######################################
+err() {
+  echo "$*" >&2
+}
 
-BACKUP="$CONFIG.bak.$(date +%Y%m%d-%H%M%S)"
-cat "$CONFIG" > "$BACKUP"
+#######################################
+# Checks whether the Claude Desktop app is running.
+# Returns:
+#   0 if a process named Claude is running, non-zero otherwise.
+#######################################
+claude_desktop_running() {
+  local procs
+  # Capture first, then test (pipefail + grep -q would otherwise invert the
+  # guard).
+  procs="$(ps -Ao comm= || true)"
+  printf '%s\n' "${procs}" | grep -qE '(^|/)Claude$'
+}
 
-TMP="$(mktemp)"
-CONFIG="$CONFIG" BIN="$BIN" python3 - > "$TMP" <<'PY'
-import json, os
-cfg = json.load(open(os.environ["CONFIG"]))
-cfg.setdefault("mcpServers", {})["pocketcasts"] = {"command": os.environ["BIN"], "args": []}
+#######################################
+# Writes the config with mcpServers.pocketcasts set, as JSON, to stdout.
+# Arguments:
+#   Path of the current config.
+#   Path of the server binary.
+# Outputs:
+#   Writes the updated config to stdout.
+#######################################
+render_config() {
+  python3 - "$1" "$2" << 'PY'
+import json
+import sys
+
+config_path, binary = sys.argv[1], sys.argv[2]
+with open(config_path) as f:
+    cfg = json.load(f)
+cfg.setdefault("mcpServers", {})["pocketcasts"] = {
+    "command": binary,
+    "args": [],
+}
 print(json.dumps(cfg, indent=2))
 PY
-cat "$TMP" > "$CONFIG"
-rm -f "$TMP"
-echo "Added mcpServers.pocketcasts -> $BIN"
-echo "Backup: $BACKUP"
-echo "Now relaunch Claude Desktop."
+}
+
+main() {
+  if claude_desktop_running; then
+    err "Claude Desktop is running. Quit it (Cmd-Q), run this again," \
+      "then relaunch."
+    exit 1
+  fi
+  if [[ ! -x "${BIN}" ]]; then
+    err "Server binary missing at ${BIN}; run 'uv sync' in ${PROJECT} first."
+    exit 1
+  fi
+  if [[ ! -f "${CONFIG}" ]]; then
+    err "Config not found at ${CONFIG}"
+    exit 1
+  fi
+
+  local backup
+  backup="${CONFIG}.bak.$(date +%Y%m%d-%H%M%S)"
+  cat "${CONFIG}" > "${backup}"
+
+  local tmp
+  tmp="$(mktemp)"
+  render_config "${CONFIG}" "${BIN}" > "${tmp}"
+  cat "${tmp}" > "${CONFIG}"
+  rm -f "${tmp}"
+  echo "Added mcpServers.pocketcasts -> ${BIN}"
+  echo "Backup: ${backup}"
+  echo "Now relaunch Claude Desktop."
+}
+
+main "$@"
