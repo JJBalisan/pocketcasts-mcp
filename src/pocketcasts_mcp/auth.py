@@ -30,7 +30,7 @@ AUTH_HINT = (
 log = logging.getLogger(__name__)
 
 
-class NotLoggedIn(RuntimeError):
+class NotLoggedIn(RuntimeError):  # noqa: N818 - public name; rename deferred
     """No usable Pocket Casts session; the user has to log in again."""
 
 
