@@ -30,23 +30,40 @@ log = logging.getLogger(__name__)
 
 
 class NotLoggedIn(RuntimeError):
-    pass
+    """No usable Pocket Casts session; the user has to log in again."""
 
 
 def stored_refresh_token() -> str | None:
+    """Returns the refresh token saved in the keychain.
+
+    Returns:
+        The refresh token, or None when no session is stored.
+    """
     return keyring.get_password(SERVICE, KEY_REFRESH)
 
 
 def stored_email() -> str | None:
+    """Returns the account email saved in the keychain.
+
+    Returns:
+        The email, or None when no session is stored.
+    """
     return keyring.get_password(SERVICE, KEY_EMAIL)
 
 
 def store_session(email: str, refresh: str) -> None:
+    """Saves the account email and refresh token in the keychain.
+
+    Args:
+        email: Pocket Casts account email.
+        refresh: Refresh token to keep.
+    """
     keyring.set_password(SERVICE, KEY_EMAIL, email)
     keyring.set_password(SERVICE, KEY_REFRESH, refresh)
 
 
 def forget_session() -> None:
+    """Deletes the stored email and refresh token; missing entries are fine."""
     for key in (KEY_EMAIL, KEY_REFRESH):
         try:
             keyring.delete_password(SERVICE, key)
@@ -64,12 +81,30 @@ class TokenManager:
 
     @property
     def access_token(self) -> str:
+        """The current access token, refreshed first if missing or expired.
+
+        Raises:
+            NotLoggedIn: No refresh token is stored, or Pocket Casts refused
+                it.
+        """
         if self._access is None or time.monotonic() >= self._expires_at:
             self.refresh()
         assert self._access is not None
         return self._access
 
     def refresh(self) -> str:
+        """Exchanges the stored refresh token for a new access token.
+
+        Keeps the access token in memory with its expiry, and stores the
+        refresh token again if Pocket Casts rotated it.
+
+        Returns:
+            The new access token.
+
+        Raises:
+            NotLoggedIn: No refresh token is stored, or Pocket Casts refused
+                it.
+        """
         stored = stored_refresh_token()
         if not stored:
             raise NotLoggedIn(AUTH_HINT)
@@ -96,6 +131,7 @@ class TokenManager:
         return self._access
 
     def invalidate(self) -> None:
+        """Drops the access token so the next use refreshes it."""
         self._access = None
         self._expires_at = 0.0
 
@@ -144,6 +180,18 @@ def _check() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Runs the pocketcasts-mcp-auth command.
+
+    Logs in interactively by default; --check verifies the stored session
+    and --logout deletes it.
+
+    Args:
+        argv: Command-line arguments without the program name; None reads
+            sys.argv.
+
+    Returns:
+        The process exit code.
+    """
     parser = argparse.ArgumentParser(
         prog="pocketcasts-mcp-auth",
         description="Log in to Pocket Casts once and keep only the refresh token in the keychain.",

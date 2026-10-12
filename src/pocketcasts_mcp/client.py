@@ -1,4 +1,6 @@
-"""Thin wrapper over api-pocketcasts that adds token refresh, retry on 401,
+"""Pocket Casts client used by the MCP server.
+
+Thin wrapper over api-pocketcasts that adds token refresh, retry on 401,
 podcast-title lookup, and plain-dict results for the MCP layer.
 """
 
@@ -63,6 +65,13 @@ class _AuthFailure(Exception):
 
 
 class PocketCasts:
+    """Reads and edits one account's Up Next queue and subscriptions.
+
+    Every call goes through _call, which supplies a fresh access token and
+    retries once after a refresh when Pocket Casts rejects it. Errors reach
+    the caller as PocketCastsError with a readable message.
+    """
+
     def __init__(self) -> None:
         self._tokens = auth.TokenManager()
         self._podcast_titles: dict[str, str] | None = None
@@ -115,6 +124,14 @@ class PocketCasts:
             raise PocketCastsError(f"Pocket Casts API error: {e}") from e
 
     def podcast_titles(self, refresh: bool = False) -> dict[str, str]:
+        """Returns subscribed podcast titles by uuid, cached after first use.
+
+        Args:
+            refresh: Fetch the subscription list again even if cached.
+
+        Returns:
+            A dict mapping podcast uuid to title.
+        """
         if self._podcast_titles is None or refresh:
             listing = self._call(pc_podcasts.get_subscribed_podcasts)
             self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
@@ -125,6 +142,18 @@ class PocketCasts:
     def subscriptions(
         self, query: str | None = None, limit: int = 50
     ) -> dict[str, Any]:
+        """Lists subscribed podcasts, newest release first.
+
+        Also refreshes the podcast-title cache.
+
+        Args:
+            query: Case-insensitive substring of the title or author; None
+                or empty keeps every podcast.
+            limit: Maximum number of rows returned.
+
+        Returns:
+            A dict with total_matching, returned and the podcasts rows.
+        """
         listing = self._call(pc_podcasts.get_subscribed_podcasts)
         self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
         rows = [
@@ -154,7 +183,17 @@ class PocketCasts:
         }
 
     def resolve_podcast(self, podcast: str) -> tuple[str, str]:
-        """Accept a podcast uuid or a (fuzzy) title; return (uuid, title)."""
+        """Accept a podcast uuid or a (fuzzy) title; return (uuid, title).
+
+        Args:
+            podcast: A subscribed podcast's uuid, or its title or part of it.
+
+        Returns:
+            The podcast's (uuid, title).
+
+        Raises:
+            PocketCastsError: No subscribed podcast matches well enough.
+        """
         titles = self.podcast_titles()
         if podcast in titles:
             return podcast, titles[podcast]
@@ -181,6 +220,16 @@ class PocketCasts:
         return best[1], best[2]
 
     def episodes(self, podcast: str, limit: int = 20) -> dict[str, Any]:
+        """Lists a subscribed podcast's episodes, newest first.
+
+        Args:
+            podcast: Podcast uuid or title, resolved by resolve_podcast.
+            limit: Maximum number of episodes returned.
+
+        Returns:
+            A dict with the podcast's uuid, title, episode_count and the
+            episodes rows.
+        """
         uuid, title = self.resolve_podcast(podcast)
         full = self._call(
             lambda tok, u: pc_podcasts.get_podcast_full(u, access_token=tok),
@@ -222,9 +271,25 @@ class PocketCasts:
         ]
 
     def new_releases(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Lists episodes in the New Releases filter.
+
+        Args:
+            limit: Maximum number of episodes returned.
+
+        Returns:
+            One row per episode.
+        """
         return self._user_list("/user/new_releases", limit)
 
     def in_progress(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Lists partly played episodes.
+
+        Args:
+            limit: Maximum number of episodes returned.
+
+        Returns:
+            One row per episode.
+        """
         return self._user_list("/user/in_progress", limit)
 
     def _queue_rows(self, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,6 +330,12 @@ class PocketCasts:
         }
 
     def up_next(self) -> dict[str, Any]:
+        """Returns the Up Next queue in play order.
+
+        Returns:
+            A dict with count, server_modified and the episodes rows, where
+            position 1 is the episode currently playing.
+        """
         data = self._call(_post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD))
         if "order" in data and isinstance(data.get("episodes"), dict):
             # Legacy shape: order list + episodes keyed by uuid. Normalise it.
@@ -296,6 +367,20 @@ class PocketCasts:
         return payload
 
     def add(self, episode_uuid: str, position: str = "next") -> dict[str, Any]:
+        """Adds an episode to Up Next.
+
+        Args:
+            episode_uuid: The episode to queue.
+            position: "next" to play after the current episode; any other
+                value appends it.
+
+        Returns:
+            The new queue, with the added title and position.
+
+        Raises:
+            PocketCastsError: The episode lacks a field the queue needs, or
+                the request failed.
+        """
         payload = self._episode_payload(episode_uuid)
         path = (
             "/up_next/play_next" if position == "next" else "/up_next/play_last"
@@ -306,6 +391,14 @@ class PocketCasts:
         )
 
     def remove(self, episode_uuids: list[str]) -> dict[str, Any]:
+        """Removes episodes from Up Next.
+
+        Args:
+            episode_uuids: The episodes to remove.
+
+        Returns:
+            The new queue, with the removed uuids.
+        """
         data = self._call(
             _post,
             "/up_next/remove",
@@ -318,6 +411,18 @@ class PocketCasts:
         return self._queue_result(data, removed=list(episode_uuids))
 
     def move_to_front(self, episode_uuid: str) -> dict[str, Any]:
+        """Moves an episode to play next, right after the current episode.
+
+        The API has no reorder call, so this removes the episode and queues
+        it again with play_next. A failed remove is logged and ignored, so
+        an episode that was not queued gets queued.
+
+        Args:
+            episode_uuid: The episode to move.
+
+        Returns:
+            The new queue, with the moved title.
+        """
         # Emulated reorder: the API has no move; remove then re-add at the front.
         payload = self._episode_payload(episode_uuid)
         try:

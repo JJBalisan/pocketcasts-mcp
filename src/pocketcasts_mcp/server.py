@@ -96,6 +96,7 @@ def move_to_front(episode_uuid: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    """Runs the MCP server over stdio."""
     server.run(transport="stdio")
 
 
