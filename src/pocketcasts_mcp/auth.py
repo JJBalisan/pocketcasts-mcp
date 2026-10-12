@@ -15,8 +15,8 @@ import sys
 import time
 
 import keyring
-from api_pocketcasts.endpoints.auth import login_pocket_casts, refresh_token
-from api_pocketcasts.exceptions import PocketCastsAuthError
+from api_pocketcasts import exceptions as pc_exceptions
+from api_pocketcasts.endpoints import auth as pc_auth
 
 SERVICE = "pocketcasts-mcp"
 KEY_REFRESH = "refresh_token"
@@ -74,8 +74,8 @@ class TokenManager:
         if not stored:
             raise NotLoggedIn(AUTH_HINT)
         try:
-            user = refresh_token(stored)
-        except PocketCastsAuthError as e:
+            user = pc_auth.refresh_token(stored)
+        except pc_exceptions.PocketCastsAuthError as e:
             raise NotLoggedIn(
                 f"Pocket Casts refused the stored refresh token ({e}). "
                 "Run `pocketcasts-mcp-auth` again."
@@ -110,8 +110,8 @@ def _login_interactive() -> int:
     email = input("Pocket Casts email: ").strip()
     password = getpass.getpass("Pocket Casts password (not stored): ")
     try:
-        user = login_pocket_casts(email, password)
-    except PocketCastsAuthError as e:
+        user = pc_auth.login_pocket_casts(email, password)
+    except pc_exceptions.PocketCastsAuthError as e:
         print(f"Login failed: {e}", file=sys.stderr)
         return 1
     finally:

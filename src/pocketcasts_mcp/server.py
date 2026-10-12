@@ -14,12 +14,12 @@ logging.basicConfig(
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from mcp.server.mcpserver import MCPServer  # noqa: E402
-from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
+from mcp.server import mcpserver  # noqa: E402
+from mcp.server.mcpserver import exceptions as mcp_exceptions  # noqa: E402
 
-from .client import PocketCasts, PocketCastsError  # noqa: E402
+from pocketcasts_mcp import client  # noqa: E402
 
-server = MCPServer(
+server = mcpserver.MCPServer(
     "pocketcasts",
     instructions=(
         "Read and edit the user's Pocket Casts Up Next queue. Episodes are identified by uuid; "
@@ -28,19 +28,19 @@ server = MCPServer(
     ),
     log_level="WARNING",
 )
-_pc = PocketCasts()
+_pc = client.PocketCasts()
 
 
 def _guard(fn, *args: Any, **kwargs: Any):
     try:
         return fn(*args, **kwargs)
-    except PocketCastsError as e:
-        raise ToolError(str(e)) from e
+    except client.PocketCastsError as e:
+        raise mcp_exceptions.ToolError(str(e)) from e
     except Exception as e:  # unexpected response shapes, raw transport errors
         logging.getLogger(__name__).exception(
             "unexpected error in %s", getattr(fn, "__name__", fn)
         )
-        raise ToolError(f"{type(e).__name__}: {e}") from e
+        raise mcp_exceptions.ToolError(f"{type(e).__name__}: {e}") from e
 
 
 @server.tool()
@@ -85,7 +85,7 @@ def add_to_up_next(
 def remove_from_up_next(episode_uuids: list[str]) -> dict[str, Any]:
     """Remove one or more episodes (by uuid) from Up Next. Returns the new queue."""
     if not episode_uuids:
-        raise ToolError("episode_uuids must not be empty")
+        raise mcp_exceptions.ToolError("episode_uuids must not be empty")
     return _guard(_pc.remove, episode_uuids)
 
 

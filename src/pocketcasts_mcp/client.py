@@ -4,17 +4,19 @@ podcast-title lookup, and plain-dict results for the MCP layer.
 
 from __future__ import annotations
 
+import difflib
 import logging
 from collections.abc import Callable
-from difflib import SequenceMatcher
 from typing import Any, TypeVar
 
 import httpx
-from api_pocketcasts.endpoints import podcasts as pc_podcasts
-from api_pocketcasts.endpoints.user_episodes import fetch_user_episode_list
-from api_pocketcasts.exceptions import PocketCastsAPIError, PocketCastsAuthError
+from api_pocketcasts import exceptions as pc_exceptions
+from api_pocketcasts.endpoints import (
+    podcasts as pc_podcasts,
+    user_episodes as pc_user_episodes,
+)
 
-from .auth import NotLoggedIn, TokenManager
+from pocketcasts_mcp import auth
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -62,7 +64,7 @@ class _AuthFailure(Exception):
 
 class PocketCasts:
     def __init__(self) -> None:
-        self._tokens = TokenManager()
+        self._tokens = auth.TokenManager()
         self._podcast_titles: dict[str, str] | None = None
 
     # -- plumbing -----------------------------------------------------------
@@ -90,11 +92,11 @@ class PocketCasts:
     def _attempt(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:
             token = self._tokens.access_token
-        except NotLoggedIn as e:
+        except auth.NotLoggedIn as e:
             raise PocketCastsError(str(e)) from e
         try:
             return fn(token, *args, **kwargs)
-        except PocketCastsAuthError as e:
+        except pc_exceptions.PocketCastsAuthError as e:
             raise _AuthFailure(str(e)) from e
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
@@ -106,7 +108,7 @@ class PocketCasts:
             raise PocketCastsError(
                 f"Network error talking to Pocket Casts: {e}"
             ) from e
-        except PocketCastsAPIError as e:
+        except pc_exceptions.PocketCastsAPIError as e:
             details = getattr(e, "details", None) or {}
             if details.get("status_code") == 401:
                 raise _AuthFailure(str(e)) from e
@@ -166,7 +168,7 @@ class PocketCasts:
                 else (
                     0.95
                     if needle in t
-                    else SequenceMatcher(None, needle, t).ratio()
+                    else difflib.SequenceMatcher(None, needle, t).ratio()
                 )
             )
             if best is None or score > best[0]:
@@ -205,7 +207,7 @@ class PocketCasts:
         }
 
     def _user_list(self, endpoint: str, limit: int) -> list[dict[str, Any]]:
-        listing = self._call(fetch_user_episode_list, endpoint)
+        listing = self._call(pc_user_episodes.fetch_user_episode_list, endpoint)
         return [
             {
                 "uuid": e.uuid,
