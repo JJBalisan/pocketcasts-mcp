@@ -81,9 +81,10 @@ class PocketCasts:
     def _call(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Call fn(access_token, ...) and retry once after refreshing on 401.
 
-        The library is inconsistent: the up_next endpoints raise PocketCastsAuthError
-        on 401, but user/episode and the user lists raise a bare httpx error, and
-        podcast/full wraps everything as a response error. Normalise all of them.
+        The library is inconsistent: the up_next endpoints raise
+        PocketCastsAuthError on 401, but user/episode and the user lists raise
+        a bare httpx error, and podcast/full wraps everything as a response
+        error. Normalise all of them.
         """
         try:
             return self._attempt(fn, *args, **kwargs)
@@ -94,8 +95,8 @@ class PocketCasts:
                 return self._attempt(fn, *args, **kwargs)
             except _AuthFailure as e:
                 raise PocketCastsError(
-                    f"Pocket Casts rejected the session even after a refresh ({e}). "
-                    "Run `pocketcasts-mcp-auth` to log in again."
+                    "Pocket Casts rejected the session even after a refresh "
+                    f"({e}). Run `pocketcasts-mcp-auth` to log in again."
                 ) from e
 
     def _attempt(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
@@ -111,7 +112,8 @@ class PocketCasts:
             if e.response.status_code == 401:
                 raise _AuthFailure("HTTP 401") from e
             raise PocketCastsError(
-                f"Pocket Casts HTTP {e.response.status_code}: {e.response.text[:200]}"
+                f"Pocket Casts HTTP {e.response.status_code}: "
+                f"{e.response.text[:200]}"
             ) from e
         except httpx.HTTPError as e:
             raise PocketCastsError(
@@ -214,8 +216,8 @@ class PocketCasts:
                 best = (score, uuid, title)
         if best is None or best[0] < 0.6:
             raise PocketCastsError(
-                f"No subscribed podcast matches {podcast!r}. Use list_subscriptions to see titles, "
-                "or pass the podcast uuid."
+                f"No subscribed podcast matches {podcast!r}. Use "
+                "list_subscriptions to see titles, or pass the podcast uuid."
             )
         return best[1], best[2]
 
@@ -362,7 +364,8 @@ class PocketCasts:
         missing = [k for k, v in payload.items() if not v]
         if missing:
             raise PocketCastsError(
-                f"Episode {episode_uuid} is missing {', '.join(missing)}; cannot queue it."
+                f"Episode {episode_uuid} is missing {', '.join(missing)}; "
+                "cannot queue it."
             )
         return payload
 
@@ -423,7 +426,8 @@ class PocketCasts:
         Returns:
             The new queue, with the moved title.
         """
-        # Emulated reorder: the API has no move; remove then re-add at the front.
+        # Emulated reorder: the API has no move; remove then re-add at the
+        # front.
         payload = self._episode_payload(episode_uuid)
         try:
             self._call(

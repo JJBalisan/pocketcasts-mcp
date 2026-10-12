@@ -38,7 +38,6 @@ ignore = [
   "ANN401",             # Any is sometimes unavoidable
   "PLR0913", "PLR2004", # arg-count and magic-number are judgment calls
   "S101",               # assert is fine in tests (see per-file-ignores)
-  "E501",               # let the formatter own line length, re-enable later
 ]
 
 [lint.pydocstyle]

@@ -9,6 +9,7 @@ access token lives in memory only and is re-derived from the refresh token.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import logging
 import sys
@@ -65,10 +66,8 @@ def store_session(email: str, refresh: str) -> None:
 def forget_session() -> None:
     """Deletes the stored email and refresh token; missing entries are fine."""
     for key in (KEY_EMAIL, KEY_REFRESH):
-        try:
+        with contextlib.suppress(keyring.errors.PasswordDeleteError):
             keyring.delete_password(SERVICE, key)
-        except keyring.errors.PasswordDeleteError:
-            pass
 
 
 class TokenManager:
@@ -154,13 +153,15 @@ def _login_interactive() -> int:
         del password
     if not user.refresh_token:
         print(
-            "Login succeeded but no refresh token was returned; cannot continue.",
+            "Login succeeded but no refresh token was returned; "
+            "cannot continue.",
             file=sys.stderr,
         )
         return 1
     store_session(user.email or email, user.refresh_token)
     print(
-        f"Logged in as {user.email or email}. Refresh token saved to the keychain (service {SERVICE!r})."
+        f"Logged in as {user.email or email}. Refresh token saved to the "
+        f"keychain (service {SERVICE!r})."
     )
     return 0
 
@@ -194,7 +195,10 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         prog="pocketcasts-mcp-auth",
-        description="Log in to Pocket Casts once and keep only the refresh token in the keychain.",
+        description=(
+            "Log in to Pocket Casts once and keep only the refresh token in "
+            "the keychain."
+        ),
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(

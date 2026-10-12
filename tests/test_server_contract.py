@@ -82,8 +82,8 @@ def recorder(monkeypatch):
 @pytest.mark.parametrize(
     ("call", "expected"),
     [
-        (lambda: server.get_up_next(), ("up_next",)),
-        (lambda: server.list_subscriptions(), ("subscriptions", None, 50)),
+        (server.get_up_next, ("up_next",)),
+        (server.list_subscriptions, ("subscriptions", None, 50)),
         (
             lambda: server.list_subscriptions("abc", 0),
             ("subscriptions", "abc", 1),
@@ -95,7 +95,7 @@ def recorder(monkeypatch):
         (lambda: server.list_episodes("pod"), ("episodes", "pod", 20)),
         (lambda: server.list_episodes("pod", -5), ("episodes", "pod", 1)),
         (lambda: server.list_episodes("pod", 101), ("episodes", "pod", 100)),
-        (lambda: server.list_new_releases(), ("new_releases", 20)),
+        (server.list_new_releases, ("new_releases", 20)),
         (lambda: server.list_new_releases(0), ("new_releases", 1)),
         (lambda: server.list_in_progress(500), ("in_progress", 100)),
         (lambda: server.add_to_up_next("ep"), ("add", "ep", "next")),

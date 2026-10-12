@@ -58,7 +58,7 @@ def run(home, tmp_path, processes=""):
         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
         "TMPDIR": str(tmp_path),
     }
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - runs this repo's own script.
         [str(SCRIPT)],
         env=env,
         capture_output=True,
