@@ -1,0 +1,14 @@
+# Runs the hermetic client-layer test suite. Lint is not gated here yet: the
+# existing sources predate the shared Google-style ruff config (audit P2).
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (locked)
+        run: uv sync --locked
+      - name: Tests
+        run: uv run pytest -q
