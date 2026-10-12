@@ -13,6 +13,7 @@ from tests import fakes
 LOGIN = "/user/login_pocket_casts"
 REFRESH_KEY = (auth.SERVICE, auth.KEY_REFRESH)
 EMAIL_KEY = (auth.SERVICE, auth.KEY_EMAIL)
+TYPED_INPUT = "typed-in-test"
 
 HELP = """\
 usage: pocketcasts-mcp-auth [-h] [--check | --logout]
@@ -44,7 +45,7 @@ def terminal(monkeypatch):
 
     def fake_getpass(prompt):
         prompts.append(prompt)
-        return "hunter2"
+        return TYPED_INPUT
 
     monkeypatch.setattr(sys, "stdin", FakeTTY())
     monkeypatch.setattr("builtins.input", fake_input)
@@ -146,7 +147,7 @@ def test_login_stores_session(terminal, fake_keyring, api, capsys):
     (call,) = api.calls_to(LOGIN)
     assert call.body == {
         "email": "typed@example.invalid",
-        "password": "hunter2",
+        "password": TYPED_INPUT,
     }
     assert fake_keyring.writes == [
         (auth.SERVICE, auth.KEY_EMAIL, fakes.EMAIL),
