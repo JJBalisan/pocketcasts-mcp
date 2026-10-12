@@ -9,7 +9,9 @@ import logging
 import sys
 from typing import Any, Literal
 
-logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(name)s: %(message)s")
+logging.basicConfig(
+    stream=sys.stderr, level=logging.INFO, format="%(name)s: %(message)s"
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 from mcp.server.mcpserver import MCPServer  # noqa: E402
@@ -35,7 +37,9 @@ def _guard(fn, *args: Any, **kwargs: Any):
     except PocketCastsError as e:
         raise ToolError(str(e)) from e
     except Exception as e:  # unexpected response shapes, raw transport errors
-        logging.getLogger(__name__).exception("unexpected error in %s", getattr(fn, "__name__", fn))
+        logging.getLogger(__name__).exception(
+            "unexpected error in %s", getattr(fn, "__name__", fn)
+        )
         raise ToolError(f"{type(e).__name__}: {e}") from e
 
 
@@ -70,7 +74,9 @@ def list_in_progress(limit: int = 20) -> list[dict[str, Any]]:
 
 
 @server.tool()
-def add_to_up_next(episode_uuid: str, position: Literal["next", "last"] = "next") -> dict[str, Any]:
+def add_to_up_next(
+    episode_uuid: str, position: Literal["next", "last"] = "next"
+) -> dict[str, Any]:
     """Queue an episode. position="next" inserts right after the currently playing episode (position 2); "last" appends. Returns the new queue."""
     return _guard(_pc.add, episode_uuid, position)
 

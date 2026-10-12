@@ -59,7 +59,8 @@ class TokenManager:
 
     def __init__(self) -> None:
         self._access: str | None = None
-        self._expires_at: float = 0.0  # monotonic seconds; refresh proactively past this
+        # Monotonic seconds; refresh proactively past this.
+        self._expires_at: float = 0.0
 
     @property
     def access_token(self) -> str:
@@ -81,10 +82,16 @@ class TokenManager:
             ) from e
         self._access = user.access_token
         ttl = int(user.expires_in or 0)
-        self._expires_at = time.monotonic() + max(ttl - 60, 60) if ttl else time.monotonic() + 3600
+        self._expires_at = (
+            time.monotonic() + max(ttl - 60, 60)
+            if ttl
+            else time.monotonic() + 3600
+        )
         # Pocket Casts may rotate the refresh token; keep the newest one.
         if user.refresh_token and user.refresh_token != stored:
-            store_session(user.email or stored_email() or "", user.refresh_token)
+            store_session(
+                user.email or stored_email() or "", user.refresh_token
+            )
             log.info("stored rotated refresh token")
         return self._access
 
@@ -95,7 +102,10 @@ class TokenManager:
 
 def _login_interactive() -> int:
     if not sys.stdin.isatty():
-        print("Run this from a real terminal; it prompts for your password.", file=sys.stderr)
+        print(
+            "Run this from a real terminal; it prompts for your password.",
+            file=sys.stderr,
+        )
         return 2
     email = input("Pocket Casts email: ").strip()
     password = getpass.getpass("Pocket Casts password (not stored): ")
@@ -107,10 +117,15 @@ def _login_interactive() -> int:
     finally:
         del password
     if not user.refresh_token:
-        print("Login succeeded but no refresh token was returned; cannot continue.", file=sys.stderr)
+        print(
+            "Login succeeded but no refresh token was returned; cannot continue.",
+            file=sys.stderr,
+        )
         return 1
     store_session(user.email or email, user.refresh_token)
-    print(f"Logged in as {user.email or email}. Refresh token saved to the keychain (service {SERVICE!r}).")
+    print(
+        f"Logged in as {user.email or email}. Refresh token saved to the keychain (service {SERVICE!r})."
+    )
     return 0
 
 
@@ -134,8 +149,14 @@ def main(argv: list[str] | None = None) -> int:
         description="Log in to Pocket Casts once and keep only the refresh token in the keychain.",
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--check", action="store_true", help="verify the stored session still works")
-    group.add_argument("--logout", action="store_true", help="delete the stored session")
+    group.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the stored session still works",
+    )
+    group.add_argument(
+        "--logout", action="store_true", help="delete the stored session"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
     if args.check:

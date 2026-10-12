@@ -96,7 +96,9 @@ def test_adds_server_and_keeps_backup(home, tmp_path):
         }
     }
     assert config.read_text() == json.dumps(expected, indent=2) + "\n"
-    leftovers = [p for p in tmp_path.iterdir() if p.name not in ("home", "stubs")]
+    leftovers = [
+        p for p in tmp_path.iterdir() if p.name not in ("home", "stubs")
+    ]
     assert leftovers == []
 
 

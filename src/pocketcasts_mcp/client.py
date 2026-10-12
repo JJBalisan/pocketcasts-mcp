@@ -1,11 +1,13 @@
 """Thin wrapper over api-pocketcasts that adds token refresh, retry on 401,
-podcast-title lookup, and plain-dict results for the MCP layer."""
+podcast-title lookup, and plain-dict results for the MCP layer.
+"""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from difflib import SequenceMatcher
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 import httpx
 from api_pocketcasts.endpoints import podcasts as pc_podcasts
@@ -30,14 +32,23 @@ def _post(token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     which reject fields Pocket Casts has since added (e.g. alternateEnclosures).
     Raises httpx.HTTPStatusError on 401 so _attempt can refresh and retry.
     """
-    r = httpx.post(f"{API}{path}", json=payload, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    r = httpx.post(
+        f"{API}{path}",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
     r.raise_for_status()
     try:
         data = r.json()
     except ValueError as e:
-        raise PocketCastsError(f"Non-JSON reply from {path}: {r.text[:200]}") from e
+        raise PocketCastsError(
+            f"Non-JSON reply from {path}: {r.text[:200]}"
+        ) from e
     if not isinstance(data, dict):
-        raise PocketCastsError(f"Unexpected reply shape from {path}: {str(data)[:200]}")
+        raise PocketCastsError(
+            f"Unexpected reply shape from {path}: {str(data)[:200]}"
+        )
     return data
 
 
@@ -88,9 +99,13 @@ class PocketCasts:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 raise _AuthFailure("HTTP 401") from e
-            raise PocketCastsError(f"Pocket Casts HTTP {e.response.status_code}: {e.response.text[:200]}") from e
+            raise PocketCastsError(
+                f"Pocket Casts HTTP {e.response.status_code}: {e.response.text[:200]}"
+            ) from e
         except httpx.HTTPError as e:
-            raise PocketCastsError(f"Network error talking to Pocket Casts: {e}") from e
+            raise PocketCastsError(
+                f"Network error talking to Pocket Casts: {e}"
+            ) from e
         except PocketCastsAPIError as e:
             details = getattr(e, "details", None) or {}
             if details.get("status_code") == 401:
@@ -105,7 +120,9 @@ class PocketCasts:
 
     # -- reads --------------------------------------------------------------
 
-    def subscriptions(self, query: str | None = None, limit: int = 50) -> dict[str, Any]:
+    def subscriptions(
+        self, query: str | None = None, limit: int = 50
+    ) -> dict[str, Any]:
         listing = self._call(pc_podcasts.get_subscribed_podcasts)
         self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
         rows = [
@@ -119,11 +136,20 @@ class PocketCasts:
         ]
         if query:
             q = query.lower()
-            rows = [r for r in rows if q in (r["title"] or "").lower() or q in (r["author"] or "").lower()]
+            rows = [
+                r
+                for r in rows
+                if q in (r["title"] or "").lower()
+                or q in (r["author"] or "").lower()
+            ]
         rows.sort(key=lambda r: r["last_episode_published"] or "", reverse=True)
         total = len(rows)
         rows = rows[:limit]
-        return {"total_matching": total, "returned": len(rows), "podcasts": rows}
+        return {
+            "total_matching": total,
+            "returned": len(rows),
+            "podcasts": rows,
+        }
 
     def resolve_podcast(self, podcast: str) -> tuple[str, str]:
         """Accept a podcast uuid or a (fuzzy) title; return (uuid, title)."""
@@ -134,7 +160,15 @@ class PocketCasts:
         best: tuple[float, str, str] | None = None
         for uuid, title in titles.items():
             t = (title or "").lower()
-            score = 1.0 if needle == t else (0.95 if needle in t else SequenceMatcher(None, needle, t).ratio())
+            score = (
+                1.0
+                if needle == t
+                else (
+                    0.95
+                    if needle in t
+                    else SequenceMatcher(None, needle, t).ratio()
+                )
+            )
             if best is None or score > best[0]:
                 best = (score, uuid, title)
         if best is None or best[0] < 0.6:
@@ -146,9 +180,14 @@ class PocketCasts:
 
     def episodes(self, podcast: str, limit: int = 20) -> dict[str, Any]:
         uuid, title = self.resolve_podcast(podcast)
-        full = self._call(lambda tok, u: pc_podcasts.get_podcast_full(u, access_token=tok), uuid)
+        full = self._call(
+            lambda tok, u: pc_podcasts.get_podcast_full(u, access_token=tok),
+            uuid,
+        )
         eps = full.episodes or []
-        eps = sorted(eps, key=lambda e: e.get("published") or "", reverse=True)[:limit]
+        eps = sorted(eps, key=lambda e: e.get("published") or "", reverse=True)[
+            :limit
+        ]
         return {
             "podcast_uuid": uuid,
             "podcast_title": title,
@@ -188,7 +227,11 @@ class PocketCasts:
 
     def _queue_rows(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         titles = self.podcast_titles()
-        sync = {str(x.get("uuid")): x for x in data.get("episodeSync") or [] if isinstance(x, dict)}
+        sync = {
+            str(x.get("uuid")): x
+            for x in data.get("episodeSync") or []
+            if isinstance(x, dict)
+        }
         rows = []
         for i, ep in enumerate(data.get("episodes") or [], start=1):
             if not isinstance(ep, dict):
@@ -208,9 +251,16 @@ class PocketCasts:
             )
         return rows
 
-    def _queue_result(self, data: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    def _queue_result(
+        self, data: dict[str, Any], **extra: Any
+    ) -> dict[str, Any]:
         rows = self._queue_rows(data)
-        return {**extra, "count": len(rows), "server_modified": data.get("serverModified"), "episodes": rows}
+        return {
+            **extra,
+            "count": len(rows),
+            "server_modified": data.get("serverModified"),
+            "episodes": rows,
+        }
 
     def up_next(self) -> dict[str, Any]:
         data = self._call(_post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD))
@@ -219,7 +269,9 @@ class PocketCasts:
             eps = data["episodes"]
             data = {
                 "serverModified": data.get("serverModified"),
-                "episodes": [{"uuid": u, **(eps.get(u) or {})} for u in data["order"]],
+                "episodes": [
+                    {"uuid": u, **(eps.get(u) or {})} for u in data["order"]
+                ],
             }
         return self._queue_result(data)
 
@@ -236,27 +288,47 @@ class PocketCasts:
         }
         missing = [k for k, v in payload.items() if not v]
         if missing:
-            raise PocketCastsError(f"Episode {episode_uuid} is missing {', '.join(missing)}; cannot queue it.")
+            raise PocketCastsError(
+                f"Episode {episode_uuid} is missing {', '.join(missing)}; cannot queue it."
+            )
         return payload
 
     def add(self, episode_uuid: str, position: str = "next") -> dict[str, Any]:
         payload = self._episode_payload(episode_uuid)
-        path = "/up_next/play_next" if position == "next" else "/up_next/play_last"
+        path = (
+            "/up_next/play_next" if position == "next" else "/up_next/play_last"
+        )
         data = self._call(_post, path, {"version": 2, "episode": payload})
-        return self._queue_result(data, added=payload["title"], position=position)
+        return self._queue_result(
+            data, added=payload["title"], position=position
+        )
 
     def remove(self, episode_uuids: list[str]) -> dict[str, Any]:
-        data = self._call(_post, "/up_next/remove", {"version": 2, "uuids": list(episode_uuids)})
+        data = self._call(
+            _post,
+            "/up_next/remove",
+            {"version": 2, "uuids": list(episode_uuids)},
+        )
         if not data.get("episodes"):
-            data = self._call(_post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD))
+            data = self._call(
+                _post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD)
+            )
         return self._queue_result(data, removed=list(episode_uuids))
 
     def move_to_front(self, episode_uuid: str) -> dict[str, Any]:
         # Emulated reorder: the API has no move; remove then re-add at the front.
         payload = self._episode_payload(episode_uuid)
         try:
-            self._call(_post, "/up_next/remove", {"version": 2, "uuids": [episode_uuid]})
+            self._call(
+                _post,
+                "/up_next/remove",
+                {"version": 2, "uuids": [episode_uuid]},
+            )
         except PocketCastsError as e:
-            log.info("remove before move failed (episode may not be queued): %s", e)
-        data = self._call(_post, "/up_next/play_next", {"version": 2, "episode": payload})
+            log.info(
+                "remove before move failed (episode may not be queued): %s", e
+            )
+        data = self._call(
+            _post, "/up_next/play_next", {"version": 2, "episode": payload}
+        )
         return self._queue_result(data, moved_to_front=payload["title"])
