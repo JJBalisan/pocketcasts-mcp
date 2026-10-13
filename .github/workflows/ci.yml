@@ -2,6 +2,9 @@
 # existing sources predate the shared Google-style ruff config (audit P2).
 name: ci
 on: [push, pull_request]
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
