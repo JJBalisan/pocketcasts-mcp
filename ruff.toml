@@ -58,4 +58,6 @@ max-statements = 50      # ~ pyguide 3.18 "about 40 lines"
 "scripts/**" = ["T20"]
 # The pocketcasts-mcp-auth command talks to the user on stdout and stderr.
 "src/pocketcasts_mcp/auth.py" = ["T20"]
+# version.py doubles as a script that prints the version for scripts/.
+"src/pocketcasts_mcp/version.py" = ["T20"]
 "examples/**" = ["T20", "D"]

@@ -12,6 +12,11 @@ readonly CLAUDE_DIR="${HOME}/Library/Application Support/Claude"
 readonly CONFIG="${CLAUDE_DIR}/claude_desktop_config.json"
 readonly PROJECT="${HOME}/Developer/active/pocketcasts-mcp"
 readonly BIN="${PROJECT}/.venv/bin/pocketcasts-mcp"
+# The checkout this script lives in, for the version line; PROJECT is where
+# the installed server is expected, which is the same tree outside tests.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO
+readonly VERSION_PY="${REPO}/src/pocketcasts_mcp/version.py"
 
 #######################################
 # Prints an error message to stderr.
@@ -22,6 +27,21 @@ readonly BIN="${PROJECT}/.venv/bin/pocketcasts-mcp"
 #######################################
 err() {
   echo "$*" >&2
+}
+
+#######################################
+# Prints the version of the checkout, the same string the server logs.
+# Globals:
+#   VERSION_PY
+#   REPO_VERSION - when set, printed as is (tests pin it to a fixed string).
+# Outputs:
+#   One line: the git describe string, or "unknown".
+#######################################
+repo_version() {
+  local v
+  v="$(python3 -I "${VERSION_PY}" 2> /dev/null)" && [[ -n "${v}" ]] \
+    || v="unknown"
+  printf '%s\n' "${v}"
 }
 
 #######################################
@@ -62,6 +82,7 @@ PY
 }
 
 main() {
+  err "pocketcasts-mcp $(repo_version)"
   if claude_desktop_running; then
     err "Claude Desktop is running. Quit it (Cmd-Q), run this again," \
       "then relaunch."

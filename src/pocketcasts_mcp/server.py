@@ -18,7 +18,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 from mcp.server import mcpserver  # noqa: E402
 from mcp.server.mcpserver import exceptions as mcp_exceptions  # noqa: E402
 
-from pocketcasts_mcp import client  # noqa: E402
+from pocketcasts_mcp import client, version  # noqa: E402
+
+log = logging.getLogger(__name__)
 
 server = mcpserver.MCPServer(
     "pocketcasts",
@@ -39,9 +41,7 @@ def _guard[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     except client.PocketCastsError as e:
         raise mcp_exceptions.ToolError(str(e)) from e
     except Exception as e:  # unexpected response shapes, raw transport errors
-        logging.getLogger(__name__).exception(
-            "unexpected error in %s", getattr(fn, "__name__", fn)
-        )
+        log.exception("unexpected error in %s", getattr(fn, "__name__", fn))
         raise mcp_exceptions.ToolError(f"{type(e).__name__}: {e}") from e
 
 
@@ -141,7 +141,12 @@ def move_to_front(episode_uuid: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    """Runs the MCP server over stdio."""
+    """Runs the MCP server over stdio.
+
+    The first line on stderr names the checkout (tag or commit) the server
+    runs from, so a client log can be matched to the code behind it.
+    """
+    log.info("pocketcasts-mcp %s", version.repo_version())
     server.run(transport="stdio")
 
 

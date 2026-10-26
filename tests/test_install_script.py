@@ -3,6 +3,8 @@
 The script runs by path, so its shebang picks the interpreter. HOME points at
 a temporary directory and a stub `ps` comes first on PATH, so nothing outside
 tmp_path is read or written and the running-app check is controlled.
+REPO_VERSION pins the version line the script logs first, so stderr stays
+stable across commits.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ INTERPRETER = SCRIPT.read_text().splitlines()[0].removeprefix("#!").split()[0]
 CONFIG_REL = "Library/Application Support/Claude/claude_desktop_config.json"
 BIN_REL = "Developer/active/pocketcasts-mcp/.venv/bin/pocketcasts-mcp"
 ORIGINAL = {"mcpServers": {"other": {"command": "/bin/other", "args": ["x"]}}}
+PINNED = "v9.9.9-test"
+VERSION_LINE = f"pocketcasts-mcp {PINNED}\n"
 
 pytestmark = pytest.mark.skipif(
     shutil.which(INTERPRETER) is None,
@@ -46,7 +50,7 @@ def home(tmp_path):
     return home
 
 
-def run(home, tmp_path, processes=""):
+def run(home, tmp_path, processes="", pin=PINNED):
     """Runs the script with a stub ps that prints processes."""
     stub_dir = tmp_path / "stubs"
     stub_dir.mkdir(exist_ok=True)
@@ -58,6 +62,8 @@ def run(home, tmp_path, processes=""):
         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
         "TMPDIR": str(tmp_path),
     }
+    if pin is not None:
+        env["REPO_VERSION"] = pin
     return subprocess.run(  # noqa: S603 - runs this repo's own script.
         [str(SCRIPT)],
         env=env,
@@ -75,7 +81,7 @@ def test_adds_server_and_keeps_backup(home, tmp_path):
     result = run(home, tmp_path, "/usr/sbin/cfprefsd\nlogin\n")
 
     assert result.returncode == 0
-    assert result.stderr == ""
+    assert result.stderr == VERSION_LINE
     config = home / CONFIG_REL
     binary = home / BIN_REL
     lines = result.stdout.splitlines()
@@ -126,7 +132,7 @@ def test_refuses_while_claude_desktop_runs(home, tmp_path, processes):
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr == (
+    assert result.stderr == VERSION_LINE + (
         "Claude Desktop is running. Quit it (Cmd-Q), run this again, then"
         " relaunch.\n"
     )
@@ -150,7 +156,7 @@ def test_refuses_without_server_binary(home, tmp_path):
     assert result.returncode == 1
     assert result.stdout == ""
     project = home / "Developer/active/pocketcasts-mcp"
-    assert result.stderr == (
+    assert result.stderr == VERSION_LINE + (
         f"Server binary missing at {home / BIN_REL}; run 'uv sync' in"
         f" {project} first.\n"
     )
@@ -164,4 +170,16 @@ def test_refuses_without_config(home, tmp_path):
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr == f"Config not found at {home / CONFIG_REL}\n"
+    assert result.stderr == (
+        VERSION_LINE + f"Config not found at {home / CONFIG_REL}\n"
+    )
+
+
+def test_logs_the_checkout_version_without_a_pin(home, tmp_path):
+    result = run(home, tmp_path, pin=None)
+
+    assert result.returncode == 0
+    (line,) = result.stderr.splitlines()
+    assert re.fullmatch(
+        r"pocketcasts-mcp (v\d+\.\d+\.\d+-\d+-g)?[0-9a-f]{7,}(-dirty)?", line
+    )
