@@ -58,3 +58,31 @@ approval covers both.
 
 If every call fails with an auth error, run `pocketcasts-mcp-auth` again.
 `pocketcasts-mcp-auth --logout` removes the stored session.
+
+## Releasing
+
+Deploying is `git pull` in this checkout, so a release is just a name for
+what is deployed. The server logs `pocketcasts-mcp <version>` to stderr as
+its first line at every start (Claude Desktop and Claude Code keep the
+server's stderr in their MCP logs), where the version is
+`git describe --tags --long --dirty --always` on the checkout:
+`v1.0.0-0-g<sha>` on a release, `v1.0.0-3-g<sha>` three commits past it,
+`-dirty` while the tree has local edits, `unknown` when git cannot answer.
+`REPO_VERSION` in the environment overrides it, which is how the tests pin
+the line.
+
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new
+   `[X.Y.Z] - date` heading and update the compare links at the bottom; set
+   the same version in `pyproject.toml` and `src/pocketcasts_mcp/__init__.py`
+   and run `/opt/homebrew/bin/uv lock` so `uv sync --locked` still passes.
+2. Merge to `main`, pull, then tag the merge commit and push the tag over
+   SSH:
+
+   ```bash
+   git tag -a vX.Y.Z -m vX.Y.Z && git push git@github.com:JJBalisan/pocketcasts-mcp.git vX.Y.Z
+   ```
+
+3. The next start of the server logs `pocketcasts-mcp vX.Y.Z-0-g<sha>`.
+
+MAJOR when a tool changes what it does or is removed, MINOR for a new tool or
+behaviour, PATCH for a fix.
