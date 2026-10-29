@@ -12,6 +12,8 @@ a behaviour, PATCH fixes one.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-29
+
 ### Added
 
 - MIT licence (`LICENSE`); the repository is now public.
@@ -48,6 +50,7 @@ a behaviour, PATCH fixes one.
 - Hermetic test suite (fakes for the keychain and the Pocket Casts API) and
   `tests/ci.sh`, the whole CI as one script.
 
-[Unreleased]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/JJBalisan/pocketcasts-mcp/releases/tag/v1.0.0
