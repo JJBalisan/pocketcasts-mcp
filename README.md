@@ -42,7 +42,7 @@ this into `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 "pocketcasts": {
-  "command": "/Users/jjbalisan/Developer/active/pocketcasts-mcp/.venv/bin/pocketcasts-mcp",
+  "command": "/path/to/pocketcasts-mcp/.venv/bin/pocketcasts-mcp",
   "args": []
 }
 ```
