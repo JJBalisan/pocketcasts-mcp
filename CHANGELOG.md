@@ -12,6 +12,13 @@ a behaviour, PATCH fixes one.
 
 ## [Unreleased]
 
+### Changed
+
+- CI follows dev-toolchain's template: push runs on `main` only and a
+  newer push to a PR cancels its older run, so a PR runs once;
+  `actions/checkout` v7 and `astral-sh/setup-uv` pinned to v10.3.0 by commit,
+  with its cache off on the self-hosted runner.
+
 ## [1.0.0] - 2026-10-26
 
 ### Added
