@@ -199,6 +199,10 @@ class PocketCasts:
     def resolve_podcast(self, podcast: str) -> tuple[str, str]:
         """Accept a podcast uuid or a (fuzzy) title; return (uuid, title).
 
+        A title cache filled by an earlier call may predate a new
+        subscription, so anything short of a uuid or exact-title hit in it
+        is looked up once more in a freshly fetched list.
+
         Args:
             podcast: A subscribed podcast's uuid, or its title or part of it.
 
@@ -208,24 +212,30 @@ class PocketCasts:
         Raises:
             PocketCastsError: No subscribed podcast matches well enough.
         """
-        titles = self.podcast_titles()
-        if podcast in titles:
-            return podcast, titles[podcast]
-        needle = podcast.lower().strip()
-        best: tuple[float, str, str] | None = None
-        for uuid, title in titles.items():
-            t = (title or "").lower()
-            score = (
-                1.0
-                if needle == t
-                else (
-                    0.95
-                    if needle in t
-                    else difflib.SequenceMatcher(None, needle, t).ratio()
+        cached = self._podcast_titles is not None
+        while True:
+            titles = self.podcast_titles()
+            if podcast in titles:
+                return podcast, titles[podcast]
+            needle = podcast.lower().strip()
+            best: tuple[float, str, str] | None = None
+            for uuid, title in titles.items():
+                t = (title or "").lower()
+                score = (
+                    1.0
+                    if needle == t
+                    else (
+                        0.95
+                        if needle in t
+                        else difflib.SequenceMatcher(None, needle, t).ratio()
+                    )
                 )
-            )
-            if best is None or score > best[0]:
-                best = (score, uuid, title)
+                if best is None or score > best[0]:
+                    best = (score, uuid, title)
+            if not cached or (best is not None and best[0] == 1.0):
+                break
+            self._podcast_titles = None
+            cached = False
         if best is None or best[0] < 0.6:
             raise PocketCastsError(
                 f"No subscribed podcast matches {podcast!r}. Use "

@@ -84,10 +84,6 @@ def test_ambiguous_substring_is_refused(pc, api, order):
         pc.resolve_podcast("daily")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="podcast-title cache is never refreshed on a miss",
-)
 def test_new_subscription_resolves_after_cache_was_filled(pc, api):
     api.route(
         PODCAST_LIST,
@@ -97,3 +93,40 @@ def test_new_subscription_resolves_after_cache_was_filled(pc, api):
     pc.resolve_podcast("the daily")
 
     assert pc.resolve_podcast("Hardcore History") == HISTORY
+
+
+def test_new_subscription_beats_a_near_match_in_a_stale_cache(pc, api):
+    # "The Daily Beast" scores 0.75 against the cached "The Daily", which
+    # used to be accepted as the requested show.
+    beast = ("pod-beast", "The Daily Beast")
+    api.route(
+        PODCAST_LIST,
+        fakes.podcast_list_reply([DAILY]),
+        fakes.podcast_list_reply([DAILY, beast]),
+    )
+    pc.resolve_podcast("the daily")
+
+    assert pc.resolve_podcast("The Daily Beast") == beast
+    assert pc.resolve_podcast("pod-beast") == beast
+    assert len(api.calls_to(PODCAST_LIST)) == 2
+
+
+def test_new_subscription_uuid_resolves_after_cache_was_filled(pc, api):
+    api.route(
+        PODCAST_LIST,
+        fakes.podcast_list_reply([DAILY]),
+        fakes.podcast_list_reply([DAILY, HISTORY]),
+    )
+    pc.resolve_podcast("the daily")
+
+    assert pc.resolve_podcast("pod-history") == HISTORY
+
+
+def test_exact_hit_in_a_warm_cache_does_not_refetch(pc, api):
+    subscribe(api, DAILY, HISTORY)
+    pc.resolve_podcast("hardcore")
+
+    pc.resolve_podcast("pod-daily")
+    pc.resolve_podcast("The Daily")
+
+    assert len(api.calls_to(PODCAST_LIST)) == 1
