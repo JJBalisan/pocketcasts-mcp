@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import threading
+import time
 import types
 
 import httpx
@@ -65,6 +68,59 @@ def test_invalidate_forces_a_refresh(api, clock):
 
     assert tokens.access_token == SECOND
     assert api.tokens_issued == 2
+
+
+def test_stale_invalidate_keeps_the_newer_token(api, clock):
+    del clock  # Frozen so only invalidate() can expire the token.
+    tokens = auth.TokenManager()
+    assert tokens.access_token == FIRST
+    tokens.invalidate(FIRST)
+    assert tokens.access_token == SECOND
+
+    # A second caller that was also refused FIRST reports it late.
+    tokens.invalidate(FIRST)
+
+    assert tokens.access_token == SECOND
+    assert api.tokens_issued == 2
+
+
+def test_parallel_callers_share_one_refresh(api, fake_keyring):
+    # Pocket Casts rotates refresh tokens and refuses a spent one, so a
+    # second concurrent refresh would log the user out.
+    spent = set()
+
+    def rotating(request):
+        refresh = json.loads(request.content)["refreshToken"]
+        if refresh in spent:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        spent.add(refresh)
+        time.sleep(0.2)  # Hold the race window open.
+        api.tokens_issued += 1
+        n = api.tokens_issued
+        return fakes.token_reply(f"tok-{n}", refresh=f"rt-{n}")
+
+    api.route(TOKEN, rotating)
+    tokens = auth.TokenManager()
+    start = threading.Barrier(4)
+    results, errors = [], []
+
+    def worker():
+        start.wait()
+        try:
+            results.append(tokens.access_token)
+        except Exception as e:  # noqa: BLE001 - collected for the assert.
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert errors == []
+    assert results == [FIRST] * 4
+    assert api.tokens_issued == 1
+    assert fake_keyring.entries[REFRESH_KEY] == "rt-1"
 
 
 def test_unchanged_refresh_token_is_not_rewritten(fake_keyring):

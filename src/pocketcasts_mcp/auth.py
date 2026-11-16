@@ -13,6 +13,7 @@ import contextlib
 import getpass
 import logging
 import sys
+import threading
 import time
 
 import keyring
@@ -71,12 +72,18 @@ def forget_session() -> None:
 
 
 class TokenManager:
-    """Holds the access token in memory and refreshes it on demand."""
+    """Holds the access token in memory and refreshes it on demand.
+
+    Thread-safe: the MCP SDK runs tool calls on worker threads, and a
+    refresh token must not be spent twice, since Pocket Casts may rotate it.
+    A lock lets one thread refresh while the others wait for its token.
+    """
 
     def __init__(self) -> None:
         self._access: str | None = None
         # Monotonic seconds; refresh proactively past this.
         self._expires_at: float = 0.0
+        self._lock = threading.Lock()
 
     @property
     def access_token(self) -> str:
@@ -86,10 +93,11 @@ class TokenManager:
             NotLoggedIn: No refresh token is stored, or Pocket Casts refused
                 it.
         """
-        if self._access is None or time.monotonic() >= self._expires_at:
-            self.refresh()
-        assert self._access is not None
-        return self._access
+        with self._lock:
+            if self._access is None or time.monotonic() >= self._expires_at:
+                self._refresh()
+            assert self._access is not None
+            return self._access
 
     def refresh(self) -> str:
         """Exchanges the stored refresh token for a new access token.
@@ -104,6 +112,11 @@ class TokenManager:
             NotLoggedIn: No refresh token is stored, or Pocket Casts refused
                 it.
         """
+        with self._lock:
+            return self._refresh()
+
+    def _refresh(self) -> str:
+        # Callers hold self._lock.
         stored = stored_refresh_token()
         if not stored:
             raise NotLoggedIn(AUTH_HINT)
@@ -129,10 +142,18 @@ class TokenManager:
             log.info("stored rotated refresh token")
         return self._access
 
-    def invalidate(self) -> None:
-        """Drops the access token so the next use refreshes it."""
-        self._access = None
-        self._expires_at = 0.0
+    def invalidate(self, rejected: str | None = None) -> None:
+        """Drops the access token so the next use refreshes it.
+
+        Args:
+            rejected: The token Pocket Casts refused. If another thread has
+                already replaced it, the newer token is kept.
+        """
+        with self._lock:
+            if rejected is not None and rejected != self._access:
+                return
+            self._access = None
+            self._expires_at = 0.0
 
 
 def _login_interactive() -> int:

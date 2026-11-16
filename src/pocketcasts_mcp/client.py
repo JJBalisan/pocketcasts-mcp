@@ -71,6 +71,10 @@ class PocketCastsError(RuntimeError):
 class _AuthFailureError(Exception):
     """Internal: the access token was rejected; caller may refresh and retry."""
 
+    def __init__(self, message: str, token: str) -> None:
+        super().__init__(message)
+        self.token = token
+
 
 class PocketCasts:
     """Reads and edits one account's Up Next queue and subscriptions.
@@ -98,7 +102,7 @@ class PocketCasts:
             return self._attempt(fn, *args, **kwargs)
         except _AuthFailureError as first:
             log.info("access token rejected (%s); refreshing once", first)
-            self._tokens.invalidate()
+            self._tokens.invalidate(first.token)
             try:
                 return self._attempt(fn, *args, **kwargs)
             except _AuthFailureError as e:
@@ -115,10 +119,10 @@ class PocketCasts:
         try:
             return fn(token, *args, **kwargs)
         except pc_exceptions.PocketCastsAuthError as e:
-            raise _AuthFailureError(str(e)) from e
+            raise _AuthFailureError(str(e), token) from e
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
-                raise _AuthFailureError("HTTP 401") from e
+                raise _AuthFailureError("HTTP 401", token) from e
             raise PocketCastsError(
                 f"Pocket Casts HTTP {e.response.status_code}: "
                 f"{e.response.text[:200]}"
@@ -130,7 +134,7 @@ class PocketCasts:
         except pc_exceptions.PocketCastsAPIError as e:
             details = getattr(e, "details", None) or {}
             if details.get("status_code") == 401:
-                raise _AuthFailureError(str(e)) from e
+                raise _AuthFailureError(str(e), token) from e
             raise PocketCastsError(f"Pocket Casts API error: {e}") from e
 
     def podcast_titles(self, refresh: bool = False) -> dict[str, str]:
