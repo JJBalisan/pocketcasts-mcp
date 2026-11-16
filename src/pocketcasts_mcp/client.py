@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -27,6 +28,9 @@ API = "https://api.pocketcasts.com"
 # The web player's request shape; returns the ordered list format.
 UP_NEXT_LIST_PAYLOAD = {"version": 2, "model": "webplayer"}
 QUEUE_FIELDS = ("uuid", "title", "url", "podcast", "published")
+# A fuzzy podcast lookup refetches the subscription list only when the
+# cached copy is older than this many seconds.
+TITLES_TTL_SECONDS = 60.0
 
 
 def _post(token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +68,28 @@ def _queued_uuids(data: dict[str, Any]) -> list[str]:
     return [str(e.get("uuid")) for e in episodes or [] if isinstance(e, dict)]
 
 
+def _best_title_match(
+    podcast: str, titles: dict[str, str]
+) -> tuple[float, str, str] | None:
+    """Returns (score, uuid, title) of the title closest to podcast."""
+    needle = podcast.lower().strip()
+    best: tuple[float, str, str] | None = None
+    for uuid, title in titles.items():
+        t = (title or "").lower()
+        score = (
+            1.0
+            if needle == t
+            else (
+                0.95
+                if needle in t
+                else difflib.SequenceMatcher(None, needle, t).ratio()
+            )
+        )
+        if best is None or score > best[0]:
+            best = (score, uuid, title)
+    return best
+
+
 class PocketCastsError(RuntimeError):
     """Readable error for the MCP layer."""
 
@@ -87,6 +113,7 @@ class PocketCasts:
     def __init__(self) -> None:
         self._tokens = auth.TokenManager()
         self._podcast_titles: dict[str, str] | None = None
+        self._titles_fetched_at = float("-inf")
 
     # -- plumbing -----------------------------------------------------------
 
@@ -146,10 +173,18 @@ class PocketCasts:
         Returns:
             A dict mapping podcast uuid to title.
         """
-        if self._podcast_titles is None or refresh:
+        titles = self._podcast_titles
+        if titles is None or refresh:
             listing = self._call(pc_podcasts.get_subscribed_podcasts)
-            self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
-        return self._podcast_titles
+            titles = self._store_titles(listing.podcasts)
+        return titles
+
+    def _store_titles(self, podcasts: list[Any]) -> dict[str, str]:
+        """Replaces the title cache with a new dict and returns that dict."""
+        titles = {p.uuid: p.title for p in podcasts}
+        self._podcast_titles = titles
+        self._titles_fetched_at = time.monotonic()
+        return titles
 
     # -- reads --------------------------------------------------------------
 
@@ -169,7 +204,7 @@ class PocketCasts:
             A dict with total_matching, returned and the podcasts rows.
         """
         listing = self._call(pc_podcasts.get_subscribed_podcasts)
-        self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
+        self._store_titles(listing.podcasts)
         rows = [
             {
                 "uuid": p.uuid,
@@ -201,7 +236,9 @@ class PocketCasts:
 
         A title cache filled by an earlier call may predate a new
         subscription, so anything short of a uuid or exact-title hit in it
-        is looked up once more in a freshly fetched list.
+        is looked up once more in a freshly fetched list, unless the cache
+        is under TITLES_TTL_SECONDS old. If that refetch fails, a good
+        enough match in the cache is used instead.
 
         Args:
             podcast: A subscribed podcast's uuid, or its title or part of it.
@@ -212,30 +249,24 @@ class PocketCasts:
         Raises:
             PocketCastsError: No subscribed podcast matches well enough.
         """
-        cached = self._podcast_titles is not None
-        while True:
-            titles = self.podcast_titles()
-            if podcast in titles:
-                return podcast, titles[podcast]
-            needle = podcast.lower().strip()
-            best: tuple[float, str, str] | None = None
-            for uuid, title in titles.items():
-                t = (title or "").lower()
-                score = (
-                    1.0
-                    if needle == t
-                    else (
-                        0.95
-                        if needle in t
-                        else difflib.SequenceMatcher(None, needle, t).ratio()
-                    )
+        titles = self.podcast_titles()
+        if podcast in titles:
+            return podcast, titles[podcast]
+        best = _best_title_match(podcast, titles)
+        stale = time.monotonic() - self._titles_fetched_at >= TITLES_TTL_SECONDS
+        if stale and (best is None or best[0] < 1.0):
+            try:
+                titles = self.podcast_titles(refresh=True)
+            except PocketCastsError as e:
+                if best is None or best[0] < 0.6:
+                    raise
+                log.warning(
+                    "refetching subscriptions failed (%s); using cache", e
                 )
-                if best is None or score > best[0]:
-                    best = (score, uuid, title)
-            if not cached or (best is not None and best[0] == 1.0):
-                break
-            self._podcast_titles = None
-            cached = False
+            else:
+                if podcast in titles:
+                    return podcast, titles[podcast]
+                best = _best_title_match(podcast, titles)
         if best is None or best[0] < 0.6:
             raise PocketCastsError(
                 f"No subscribed podcast matches {podcast!r}. Use "
