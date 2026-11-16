@@ -56,6 +56,14 @@ def _post(token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _queued_uuids(data: dict[str, Any]) -> list[str]:
+    """Returns the uuids of an up_next reply in play order, either shape."""
+    episodes = data.get("episodes")
+    if "order" in data and isinstance(episodes, dict):
+        return [str(u) for u in data["order"] or []]
+    return [str(e.get("uuid")) for e in episodes or [] if isinstance(e, dict)]
+
+
 class PocketCastsError(RuntimeError):
     """Readable error for the MCP layer."""
 
@@ -413,33 +421,75 @@ class PocketCasts:
             )
         return self._queue_result(data, removed=list(episode_uuids))
 
+    def _play_next(
+        self, body: dict[str, Any], episode_uuid: str
+    ) -> tuple[dict[str, Any], list[str]]:
+        """POSTs play_next; returns the queue and its uuids in play order.
+
+        Reads /up_next/list as well when the reply does not show the episode,
+        so the caller can verify where it landed.
+        """
+        data = self._call(_post, "/up_next/play_next", body)
+        uuids = _queued_uuids(data)
+        if episode_uuid not in uuids:
+            data = self._call(
+                _post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD)
+            )
+            uuids = _queued_uuids(data)
+        return data, uuids
+
+    def _readd(self, body: dict[str, Any], episode_uuid: str) -> dict[str, Any]:
+        """Queues an episode with play_next, retrying once; verifies it."""
+        error: PocketCastsError | None = None
+        for _ in range(2):
+            try:
+                data, uuids = self._play_next(body, episode_uuid)
+            except PocketCastsError as e:
+                log.warning("re-adding %s failed: %s", episode_uuid, e)
+                error = e
+                continue
+            if episode_uuid in uuids:
+                return data
+        detail = f" ({error})" if error else ""
+        raise PocketCastsError(
+            f"{body['episode']['title']!r} ({episode_uuid}) was removed from "
+            f"Up Next to move it but could not be added back{detail}. Add it "
+            "again with add_to_up_next."
+        ) from error
+
     def move_to_front(self, episode_uuid: str) -> dict[str, Any]:
         """Moves an episode to play next, right after the current episode.
 
-        The API has no reorder call, so this removes the episode and queues
-        it again with play_next. A failed remove is logged and ignored, so
-        an episode that was not queued gets queued.
+        The API has no reorder call. This adds the episode with play_next
+        first, so a failed request leaves it queued, and checks where it
+        landed. Only if an existing copy stayed where it was does it remove
+        the episode and add it again, retrying the re-add once and saying so
+        if the episode could not be put back.
 
         Args:
             episode_uuid: The episode to move.
 
         Returns:
             The new queue, with the moved title.
+
+        Raises:
+            PocketCastsError: The move failed; the message says if the
+                episode is no longer in Up Next.
         """
-        # Emulated reorder: the API has no move; remove then re-add at the
-        # front.
         payload = self._episode_payload(episode_uuid)
-        try:
-            self._call(
-                _post,
-                "/up_next/remove",
-                {"version": 2, "uuids": [episode_uuid]},
-            )
-        except PocketCastsError as e:
-            log.info(
-                "remove before move failed (episode may not be queued): %s", e
-            )
-        data = self._call(
-            _post, "/up_next/play_next", {"version": 2, "episode": payload}
-        )
+        body = {"version": 2, "episode": payload}
+        data, uuids = self._play_next(body, episode_uuid)
+        if uuids.count(episode_uuid) != 1 or uuids.index(episode_uuid) > 1:
+            # play_next kept an existing copy in place: remove, then re-add.
+            try:
+                self._call(
+                    _post,
+                    "/up_next/remove",
+                    {"version": 2, "uuids": [episode_uuid]},
+                )
+            except PocketCastsError:
+                # The remove may have applied before failing; put it back.
+                self._readd(body, episode_uuid)
+                raise
+            data = self._readd(body, episode_uuid)
         return self._queue_result(data, moved_to_front=payload["title"])

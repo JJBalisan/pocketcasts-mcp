@@ -138,12 +138,19 @@ class FakeUpNext:
 
     Position 1 is the playing episode. play_next inserts at position 2 (or 1
     on an empty queue) and first drops any existing copy of the episode, as
-    the live API was verified not to create duplicates.
+    the live API was verified not to create duplicates. With
+    play_next_moves=False it instead leaves an already-queued episode where
+    it is, the other way the live API could avoid a duplicate.
     """
 
-    def __init__(self, episodes: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        episodes: list[dict[str, Any]],
+        play_next_moves: bool = True,
+    ) -> None:
         self.episodes = [dict(e) for e in episodes]
         self.modified = 1_760_000_000_000
+        self.play_next_moves = play_next_moves
 
     def uuids(self) -> list[str]:
         """Returns the queued uuids in play order."""
@@ -170,6 +177,8 @@ class FakeUpNext:
 
     def _play_next(self, request: httpx.Request) -> dict[str, Any]:
         episode = json.loads(request.content)["episode"]
+        if not self.play_next_moves and episode["uuid"] in self.uuids():
+            return self._reply()
         self.episodes = [
             e for e in self.episodes if e["uuid"] != episode["uuid"]
         ]
