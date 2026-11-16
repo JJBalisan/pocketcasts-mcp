@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 
@@ -27,6 +28,9 @@ API = "https://api.pocketcasts.com"
 # The web player's request shape; returns the ordered list format.
 UP_NEXT_LIST_PAYLOAD = {"version": 2, "model": "webplayer"}
 QUEUE_FIELDS = ("uuid", "title", "url", "podcast", "published")
+# A fuzzy podcast lookup refetches the subscription list only when the
+# cached copy is older than this many seconds.
+TITLES_TTL_SECONDS = 60.0
 
 
 def _post(token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -56,12 +60,46 @@ def _post(token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _queued_uuids(data: dict[str, Any]) -> list[str]:
+    """Returns the uuids of an up_next reply in play order, either shape."""
+    episodes = data.get("episodes")
+    if "order" in data and isinstance(episodes, dict):
+        return [str(u) for u in data["order"] or []]
+    return [str(e.get("uuid")) for e in episodes or [] if isinstance(e, dict)]
+
+
+def _best_title_match(
+    podcast: str, titles: dict[str, str]
+) -> tuple[float, str, str] | None:
+    """Returns (score, uuid, title) of the title closest to podcast."""
+    needle = podcast.lower().strip()
+    best: tuple[float, str, str] | None = None
+    for uuid, title in titles.items():
+        t = (title or "").lower()
+        score = (
+            1.0
+            if needle == t
+            else (
+                0.95
+                if needle in t
+                else difflib.SequenceMatcher(None, needle, t).ratio()
+            )
+        )
+        if best is None or score > best[0]:
+            best = (score, uuid, title)
+    return best
+
+
 class PocketCastsError(RuntimeError):
     """Readable error for the MCP layer."""
 
 
 class _AuthFailureError(Exception):
     """Internal: the access token was rejected; caller may refresh and retry."""
+
+    def __init__(self, message: str, token: str) -> None:
+        super().__init__(message)
+        self.token = token
 
 
 class PocketCasts:
@@ -75,6 +113,7 @@ class PocketCasts:
     def __init__(self) -> None:
         self._tokens = auth.TokenManager()
         self._podcast_titles: dict[str, str] | None = None
+        self._titles_fetched_at = float("-inf")
 
     # -- plumbing -----------------------------------------------------------
 
@@ -90,7 +129,7 @@ class PocketCasts:
             return self._attempt(fn, *args, **kwargs)
         except _AuthFailureError as first:
             log.info("access token rejected (%s); refreshing once", first)
-            self._tokens.invalidate()
+            self._tokens.invalidate(first.token)
             try:
                 return self._attempt(fn, *args, **kwargs)
             except _AuthFailureError as e:
@@ -107,10 +146,10 @@ class PocketCasts:
         try:
             return fn(token, *args, **kwargs)
         except pc_exceptions.PocketCastsAuthError as e:
-            raise _AuthFailureError(str(e)) from e
+            raise _AuthFailureError(str(e), token) from e
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
-                raise _AuthFailureError("HTTP 401") from e
+                raise _AuthFailureError("HTTP 401", token) from e
             raise PocketCastsError(
                 f"Pocket Casts HTTP {e.response.status_code}: "
                 f"{e.response.text[:200]}"
@@ -122,7 +161,7 @@ class PocketCasts:
         except pc_exceptions.PocketCastsAPIError as e:
             details = getattr(e, "details", None) or {}
             if details.get("status_code") == 401:
-                raise _AuthFailureError(str(e)) from e
+                raise _AuthFailureError(str(e), token) from e
             raise PocketCastsError(f"Pocket Casts API error: {e}") from e
 
     def podcast_titles(self, refresh: bool = False) -> dict[str, str]:
@@ -134,10 +173,18 @@ class PocketCasts:
         Returns:
             A dict mapping podcast uuid to title.
         """
-        if self._podcast_titles is None or refresh:
+        titles = self._podcast_titles
+        if titles is None or refresh:
             listing = self._call(pc_podcasts.get_subscribed_podcasts)
-            self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
-        return self._podcast_titles
+            titles = self._store_titles(listing.podcasts)
+        return titles
+
+    def _store_titles(self, podcasts: list[Any]) -> dict[str, str]:
+        """Replaces the title cache with a new dict and returns that dict."""
+        titles = {p.uuid: p.title for p in podcasts}
+        self._podcast_titles = titles
+        self._titles_fetched_at = time.monotonic()
+        return titles
 
     # -- reads --------------------------------------------------------------
 
@@ -157,7 +204,7 @@ class PocketCasts:
             A dict with total_matching, returned and the podcasts rows.
         """
         listing = self._call(pc_podcasts.get_subscribed_podcasts)
-        self._podcast_titles = {p.uuid: p.title for p in listing.podcasts}
+        self._store_titles(listing.podcasts)
         rows = [
             {
                 "uuid": p.uuid,
@@ -187,6 +234,12 @@ class PocketCasts:
     def resolve_podcast(self, podcast: str) -> tuple[str, str]:
         """Accept a podcast uuid or a (fuzzy) title; return (uuid, title).
 
+        A title cache filled by an earlier call may predate a new
+        subscription, so anything short of a uuid or exact-title hit in it
+        is looked up once more in a freshly fetched list, unless the cache
+        is under TITLES_TTL_SECONDS old. If that refetch fails, a good
+        enough match in the cache is used instead.
+
         Args:
             podcast: A subscribed podcast's uuid, or its title or part of it.
 
@@ -199,21 +252,21 @@ class PocketCasts:
         titles = self.podcast_titles()
         if podcast in titles:
             return podcast, titles[podcast]
-        needle = podcast.lower().strip()
-        best: tuple[float, str, str] | None = None
-        for uuid, title in titles.items():
-            t = (title or "").lower()
-            score = (
-                1.0
-                if needle == t
-                else (
-                    0.95
-                    if needle in t
-                    else difflib.SequenceMatcher(None, needle, t).ratio()
+        best = _best_title_match(podcast, titles)
+        stale = time.monotonic() - self._titles_fetched_at >= TITLES_TTL_SECONDS
+        if stale and (best is None or best[0] < 1.0):
+            try:
+                titles = self.podcast_titles(refresh=True)
+            except PocketCastsError as e:
+                if best is None or best[0] < 0.6:
+                    raise
+                log.warning(
+                    "refetching subscriptions failed (%s); using cache", e
                 )
-            )
-            if best is None or score > best[0]:
-                best = (score, uuid, title)
+            else:
+                if podcast in titles:
+                    return podcast, titles[podcast]
+                best = _best_title_match(podcast, titles)
         if best is None or best[0] < 0.6:
             raise PocketCastsError(
                 f"No subscribed podcast matches {podcast!r}. Use "
@@ -413,33 +466,100 @@ class PocketCasts:
             )
         return self._queue_result(data, removed=list(episode_uuids))
 
+    def _play_next(
+        self, body: dict[str, Any], episode_uuid: str
+    ) -> tuple[dict[str, Any], list[str]]:
+        """POSTs play_next; returns the queue and its uuids in play order.
+
+        Reads /up_next/list as well when the reply does not show the episode,
+        so the caller can verify where it landed.
+        """
+        data = self._call(_post, "/up_next/play_next", body)
+        uuids = _queued_uuids(data)
+        if episode_uuid not in uuids:
+            data = self._call(
+                _post, "/up_next/list", dict(UP_NEXT_LIST_PAYLOAD)
+            )
+            uuids = _queued_uuids(data)
+        return data, uuids
+
+    def _readd(
+        self,
+        body: dict[str, Any],
+        episode_uuid: str,
+        removed: bool,
+        remove_error: PocketCastsError | None = None,
+    ) -> dict[str, Any]:
+        """Queues an episode with play_next, retrying once; verifies it.
+
+        Args:
+            body: The play_next request body.
+            episode_uuid: The episode being put back.
+            removed: True only if the episode is known to have been queued
+                and then removed; otherwise the error says it may have been.
+            remove_error: The failed remove call, quoted in the error.
+        """
+        error: PocketCastsError | None = None
+        for _ in range(2):
+            try:
+                data, uuids = self._play_next(body, episode_uuid)
+            except PocketCastsError as e:
+                log.warning("re-adding %s failed: %s", episode_uuid, e)
+                error = e
+                continue
+            if episode_uuid in uuids:
+                return data
+        detail = f" ({error})" if error else ""
+        name = f"{body['episode']['title']!r} ({episode_uuid})"
+        if removed:
+            raise PocketCastsError(
+                f"{name} was removed from Up Next to move it but could not be "
+                f"added back{detail}. Add it again with add_to_up_next."
+            ) from error
+        cause = (
+            f" (the remove call failed: {remove_error})" if remove_error else ""
+        )
+        raise PocketCastsError(
+            f"{name} may have been removed from Up Next to move it{cause} but "
+            f"could not be added back{detail}. Check get_up_next and add it "
+            "again with add_to_up_next if it is missing."
+        ) from error
+
     def move_to_front(self, episode_uuid: str) -> dict[str, Any]:
         """Moves an episode to play next, right after the current episode.
 
-        The API has no reorder call, so this removes the episode and queues
-        it again with play_next. A failed remove is logged and ignored, so
-        an episode that was not queued gets queued.
+        The API has no reorder call. This adds the episode with play_next
+        first, so a failed request leaves it queued, and checks where it
+        landed. Only if an existing copy stayed where it was does it remove
+        the episode and add it again, retrying the re-add once and saying so
+        if the episode could not be put back.
 
         Args:
             episode_uuid: The episode to move.
 
         Returns:
             The new queue, with the moved title.
+
+        Raises:
+            PocketCastsError: The move failed; the message says if the
+                episode is no longer in Up Next.
         """
-        # Emulated reorder: the API has no move; remove then re-add at the
-        # front.
         payload = self._episode_payload(episode_uuid)
-        try:
-            self._call(
-                _post,
-                "/up_next/remove",
-                {"version": 2, "uuids": [episode_uuid]},
+        body = {"version": 2, "episode": payload}
+        data, uuids = self._play_next(body, episode_uuid)
+        if uuids.count(episode_uuid) != 1 or uuids.index(episode_uuid) > 1:
+            # play_next kept an existing copy in place: remove, then re-add.
+            try:
+                self._call(
+                    _post,
+                    "/up_next/remove",
+                    {"version": 2, "uuids": [episode_uuid]},
+                )
+            except PocketCastsError as e:
+                # The remove may have applied before failing; put it back.
+                self._readd(body, episode_uuid, removed=False, remove_error=e)
+                raise
+            data = self._readd(
+                body, episode_uuid, removed=episode_uuid in uuids
             )
-        except PocketCastsError as e:
-            log.info(
-                "remove before move failed (episode may not be queued): %s", e
-            )
-        data = self._call(
-            _post, "/up_next/play_next", {"version": 2, "episode": payload}
-        )
         return self._queue_result(data, moved_to_front=payload["title"])

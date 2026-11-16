@@ -162,9 +162,8 @@ def test_move_to_front_moves_a_queued_episode_to_position_2(pc, api, queue):
     assert queue.uuids() == ["ep-1", "ep-4", "ep-2", "ep-3"]
     assert [r["uuid"] for r in result["episodes"]] == queue.uuids()
     assert result["moved_to_front"] == "Title ep-4"
-    assert writes(api) == ["/up_next/remove", "/up_next/play_next"]
-    (remove,) = api.calls_to("/up_next/remove")
-    assert remove.body == {"version": 2, "uuids": ["ep-4"]}
+    # play_next alone moved it, so the episode never left the queue.
+    assert writes(api) == ["/up_next/play_next"]
     (play_next,) = api.calls_to("/up_next/play_next")
     assert play_next.body == {
         "version": 2,
@@ -181,21 +180,145 @@ def test_move_to_front_of_absent_episode_adds_it_at_position_2(pc, api, queue):
 
     assert queue.uuids() == ["ep-1", "ep-new", "ep-2", "ep-3", "ep-4"]
     assert result["count"] == 5
-    assert writes(api) == ["/up_next/remove", "/up_next/play_next"]
+    assert writes(api) == ["/up_next/play_next"]
 
 
-def test_move_to_front_ignores_a_failed_remove(pc, api, queue):
+def test_move_to_front_failed_play_next_keeps_the_episode_queued(
+    pc, api, queue
+):
+    # Regression: remove used to go first, so a failed play_next lost ep-4.
+    lookup(api, "ep-4")
+    api.route("/up_next/play_next", httpx.Response(503, text="unavailable"))
+
+    with pytest.raises(client.PocketCastsError, match="HTTP 503"):
+        pc.move_to_front("ep-4")
+    assert queue.uuids() == ["ep-1", "ep-2", "ep-3", "ep-4"]
+    assert writes(api) == ["/up_next/play_next"]
+
+
+def test_move_to_front_removes_and_readds_when_play_next_does_not_move(
+    pc, api, queue
+):
+    queue.play_next_moves = False
+    lookup(api, "ep-4")
+
+    result = pc.move_to_front("ep-4")
+
+    assert queue.uuids() == ["ep-1", "ep-4", "ep-2", "ep-3"]
+    assert [r["uuid"] for r in result["episodes"]] == queue.uuids()
+    assert writes(api) == [
+        "/up_next/play_next",
+        "/up_next/remove",
+        "/up_next/play_next",
+    ]
+
+
+def test_move_to_front_retries_a_failed_readd(pc, api, queue):
+    queue.play_next_moves = False
+    lookup(api, "ep-4")
+    api.route(
+        "/up_next/play_next",
+        queue._play_next,
+        httpx.Response(503, text="unavailable"),
+        queue._play_next,
+    )
+
+    result = pc.move_to_front("ep-4")
+
+    assert queue.uuids() == ["ep-1", "ep-4", "ep-2", "ep-3"]
+    assert result["episodes"][1]["uuid"] == "ep-4"
+    assert writes(api) == [
+        "/up_next/play_next",
+        "/up_next/remove",
+        "/up_next/play_next",
+        "/up_next/play_next",
+    ]
+
+
+def test_move_to_front_says_when_it_could_not_put_the_episode_back(
+    pc, api, queue
+):
+    queue.play_next_moves = False
+    lookup(api, "ep-4")
+    api.route(
+        "/up_next/play_next",
+        queue._play_next,
+        httpx.Response(503, text="unavailable"),
+    )
+
+    with pytest.raises(
+        client.PocketCastsError, match="could not be added back"
+    ) as exc_info:
+        pc.move_to_front("ep-4")
+    assert "ep-4" in str(exc_info.value)
+    assert "was removed from Up Next" in str(exc_info.value)
+    assert "add_to_up_next" in str(exc_info.value)
+    assert queue.uuids() == ["ep-1", "ep-2", "ep-3"]
+
+
+def test_move_to_front_failed_remove_says_it_may_have_removed(pc, api, queue):
+    # The remove errors without applying and the re-add fails too: the
+    # episode is still queued, so the error must not claim it was removed.
+    queue.play_next_moves = False
+    lookup(api, "ep-4")
+    api.route(
+        "/up_next/play_next",
+        queue._play_next,
+        httpx.Response(503, text="unavailable"),
+    )
+    api.route("/up_next/remove", httpx.Response(500, text="remove broke"))
+
+    with pytest.raises(client.PocketCastsError) as exc_info:
+        pc.move_to_front("ep-4")
+    message = str(exc_info.value)
+    assert "may have been removed" in message
+    assert "was removed" not in message
+    assert "the remove call failed" in message
+    assert "HTTP 500" in message
+    assert "get_up_next" in message
+    assert queue.uuids() == ["ep-1", "ep-2", "ep-3", "ep-4"]
+
+
+def test_move_to_front_of_never_queued_episode_does_not_claim_removal(
+    pc, api, queue
+):
+    # play_next replies without queueing the episode, then fails on re-add.
     lookup(api, "ep-new")
-    api.route("/up_next/remove", httpx.Response(400, text="not queued"))
+    api.route(
+        "/up_next/play_next",
+        lambda req: queue._reply(),
+        httpx.Response(503, text="unavailable"),
+    )
 
-    result = pc.move_to_front("ep-new")
+    with pytest.raises(client.PocketCastsError) as exc_info:
+        pc.move_to_front("ep-new")
+    message = str(exc_info.value)
+    assert "may have been removed" in message
+    assert "was removed" not in message
+    assert "the remove call failed" not in message
+    assert queue.uuids() == ["ep-1", "ep-2", "ep-3", "ep-4"]
 
-    assert result["episodes"][1]["uuid"] == "ep-new"
-    assert writes(api) == ["/up_next/remove", "/up_next/play_next"]
+
+def test_move_to_front_puts_back_an_episode_a_failed_remove_took(
+    pc, api, queue
+):
+    # The remove applies on the server but the reply is an error.
+    queue.play_next_moves = False
+    lookup(api, "ep-4")
+
+    def remove_then_fail(request):
+        queue._remove(request)
+        return httpx.Response(504, text="gateway timeout")
+
+    api.route("/up_next/remove", remove_then_fail)
+
+    with pytest.raises(client.PocketCastsError, match="HTTP 504"):
+        pc.move_to_front("ep-4")
+    assert queue.uuids() == ["ep-1", "ep-4", "ep-2", "ep-3"]
 
 
 def test_move_to_front_of_playing_episode_demotes_it(pc, api, queue):
-    # Pins current behaviour: remove + play_next takes the playing episode
+    # Pins current behaviour: play_next takes the playing episode
     # out of position 1, so ep-2 becomes the playing episode. Flagged in the
     # report as a semantics question for JJ rather than xfailed.
     lookup(api, "ep-1")
