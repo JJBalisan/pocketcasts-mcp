@@ -483,8 +483,22 @@ class PocketCasts:
             uuids = _queued_uuids(data)
         return data, uuids
 
-    def _readd(self, body: dict[str, Any], episode_uuid: str) -> dict[str, Any]:
-        """Queues an episode with play_next, retrying once; verifies it."""
+    def _readd(
+        self,
+        body: dict[str, Any],
+        episode_uuid: str,
+        removed: bool,
+        remove_error: PocketCastsError | None = None,
+    ) -> dict[str, Any]:
+        """Queues an episode with play_next, retrying once; verifies it.
+
+        Args:
+            body: The play_next request body.
+            episode_uuid: The episode being put back.
+            removed: True only if the episode is known to have been queued
+                and then removed; otherwise the error says it may have been.
+            remove_error: The failed remove call, quoted in the error.
+        """
         error: PocketCastsError | None = None
         for _ in range(2):
             try:
@@ -496,10 +510,19 @@ class PocketCasts:
             if episode_uuid in uuids:
                 return data
         detail = f" ({error})" if error else ""
+        name = f"{body['episode']['title']!r} ({episode_uuid})"
+        if removed:
+            raise PocketCastsError(
+                f"{name} was removed from Up Next to move it but could not be "
+                f"added back{detail}. Add it again with add_to_up_next."
+            ) from error
+        cause = (
+            f" (the remove call failed: {remove_error})" if remove_error else ""
+        )
         raise PocketCastsError(
-            f"{body['episode']['title']!r} ({episode_uuid}) was removed from "
-            f"Up Next to move it but could not be added back{detail}. Add it "
-            "again with add_to_up_next."
+            f"{name} may have been removed from Up Next to move it{cause} but "
+            f"could not be added back{detail}. Check get_up_next and add it "
+            "again with add_to_up_next if it is missing."
         ) from error
 
     def move_to_front(self, episode_uuid: str) -> dict[str, Any]:
@@ -532,9 +555,11 @@ class PocketCasts:
                     "/up_next/remove",
                     {"version": 2, "uuids": [episode_uuid]},
                 )
-            except PocketCastsError:
+            except PocketCastsError as e:
                 # The remove may have applied before failing; put it back.
-                self._readd(body, episode_uuid)
+                self._readd(body, episode_uuid, removed=False, remove_error=e)
                 raise
-            data = self._readd(body, episode_uuid)
+            data = self._readd(
+                body, episode_uuid, removed=episode_uuid in uuids
+            )
         return self._queue_result(data, moved_to_front=payload["title"])
