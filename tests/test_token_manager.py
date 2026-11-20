@@ -181,20 +181,13 @@ def test_transient_refresh_failure_leaves_the_keychain_alone(
 ):
     api.route(TOKEN, reply)
 
-    with pytest.raises(auth.NotLoggedIn):
+    with pytest.raises(auth.RefreshUnavailableError):
         auth.TokenManager().refresh()
 
     assert fake_keyring.entries[REFRESH_KEY] == fakes.STORED_REFRESH
     assert fake_keyring.writes == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TokenManager.refresh turns every PocketCastsAuthError, including"
-        " 5xx/429/network failures, into NotLoggedIn ('log in again')"
-    ),
-)
 @pytest.mark.parametrize("reply", TRANSIENT, ids=TRANSIENT_IDS)
 def test_transient_refresh_failure_is_not_reported_as_logged_out(api, reply):
     api.route(TOKEN, reply)
