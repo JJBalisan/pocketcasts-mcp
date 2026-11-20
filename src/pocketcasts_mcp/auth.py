@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 
+import httpx
 import keyring
 from api_pocketcasts import exceptions as pc_exceptions
 from api_pocketcasts.endpoints import auth as pc_auth
@@ -28,11 +29,23 @@ AUTH_HINT = (
     "from a terminal to log in."
 )
 
+# /user/token statuses that mean the refresh token itself was refused.
+_REFUSED_STATUSES = (400, 401)
+
 log = logging.getLogger(__name__)
 
 
 class NotLoggedIn(RuntimeError):  # noqa: N818 - public name; rename deferred
     """No usable Pocket Casts session; the user has to log in again."""
+
+
+class RefreshUnavailableError(RuntimeError):
+    """The token refresh failed for a reason other than a refused token.
+
+    Raised for 5xx, 429 and other statuses, network errors and unreadable
+    replies. The stored session may still be fine, so logging in again
+    would not help; the next use retries the refresh.
+    """
 
 
 def stored_refresh_token() -> str | None:
@@ -92,6 +105,7 @@ class TokenManager:
         Raises:
             NotLoggedIn: No refresh token is stored, or Pocket Casts refused
                 it.
+            RefreshUnavailableError: Pocket Casts or the network failed.
         """
         with self._lock:
             if self._access is None or time.monotonic() >= self._expires_at:
@@ -111,6 +125,7 @@ class TokenManager:
         Raises:
             NotLoggedIn: No refresh token is stored, or Pocket Casts refused
                 it.
+            RefreshUnavailableError: Pocket Casts or the network failed.
         """
         with self._lock:
             return self._refresh()
@@ -123,9 +138,27 @@ class TokenManager:
         try:
             user = pc_auth.refresh_token(stored)
         except pc_exceptions.PocketCastsAuthError as e:
-            raise NotLoggedIn(
-                f"Pocket Casts refused the stored refresh token ({e}). "
-                "Run `pocketcasts-mcp-auth` again."
+            # api-pocketcasts (0.1.12, pinned in uv.lock) drops the HTTP
+            # status from the error it raises, but raises it inside its
+            # `except httpx.HTTPStatusError`, so __context__ keeps the status.
+            # tests/test_refresh_boundary.py fails if an upgrade changes that.
+            cause = e.__context__
+            if isinstance(cause, httpx.HTTPStatusError):
+                status = cause.response.status_code
+                if status in _REFUSED_STATUSES:
+                    raise NotLoggedIn(
+                        f"Pocket Casts refused the stored refresh token ({e}). "
+                        "Run `pocketcasts-mcp-auth` again."
+                    ) from e
+                reason = f"HTTP {status}"
+            elif cause is not None:
+                reason = f"{type(cause).__name__}: {cause}"
+            else:
+                reason = str(e)
+            raise RefreshUnavailableError(
+                "Pocket Casts could not refresh the session right now "
+                f"({reason}). Try again shortly; the stored login is "
+                "untouched."
             ) from e
         self._access = user.access_token
         ttl = int(user.expires_in or 0)
@@ -194,7 +227,7 @@ def _check() -> int:
         return 1
     try:
         TokenManager().refresh()
-    except NotLoggedIn as e:
+    except (NotLoggedIn, RefreshUnavailableError) as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1
     print(f"OK: refreshed an access token for {email or 'unknown account'}.")

@@ -141,7 +141,7 @@ class PocketCasts:
     def _attempt(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         try:
             token = self._tokens.access_token
-        except auth.NotLoggedIn as e:
+        except (auth.NotLoggedIn, auth.RefreshUnavailableError) as e:
             raise PocketCastsError(str(e)) from e
         try:
             return fn(token, *args, **kwargs)
