@@ -12,6 +12,25 @@ a behaviour, PATCH fixes one.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-11-20
+
+### Fixed
+
+- `move_to_front` adds the episode before it removes the old copy, so a
+  failed add can no longer leave the episode out of Up Next (#13).
+- Access-token refresh is serialised across parallel tool calls, so two
+  calls no longer refresh with the same refresh token and break the
+  session (#13).
+- A newly subscribed show is no longer resolved to an older subscription
+  by a stale title cache; the list is refetched first, and a failed
+  refetch keeps the cached titles (#13).
+- A transient token-refresh failure (HTTP 5xx or 429, a network error or
+  an unreadable reply) raises `RefreshUnavailableError` ("try again
+  shortly; the stored login is untouched") instead of `NotLoggedIn`. Only
+  a 400 or 401 from `/user/token` means the refresh token was refused and
+  asks you to run `pocketcasts-mcp-auth` again; `pocketcasts-mcp-auth
+  --check` reports the same distinction (#17, #27).
+
 ## [1.0.3] - 2026-11-02
 
 ### Changed
@@ -58,7 +77,8 @@ a behaviour, PATCH fixes one.
 - Hermetic test suite (fakes for the keychain and the Pocket Casts API) and
   `tests/ci.sh`, the whole CI as one script.
 
-[Unreleased]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/JJBalisan/pocketcasts-mcp/compare/v1.0.0...v1.0.1
